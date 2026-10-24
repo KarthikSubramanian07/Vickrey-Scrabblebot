@@ -1,0 +1,5 @@
+[
+  { "name": "premium cap 1.0x market", "patch": { "premium_cap_mult": 1.0 } },
+  { "name": "cash 5-letter words when starved below 30", "patch": { "starve_coins": 30, "starve_min_play_len": 5 } },
+  { "name": "late window: cash 4+ letter words in the last 12 auctions", "patch": { "late_window": 12, "late_min_play_len": 4 } }
+]
