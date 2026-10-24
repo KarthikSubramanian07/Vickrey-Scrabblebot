@@ -11,33 +11,31 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # The live bot shares this machine: keep CI from starving its bids.
+  CARGO_BUILD_JOBS: "4"
+  RAYON_NUM_THREADS: "4"
 
 jobs:
   check:
     name: fmt · clippy · test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, vickrey]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      # Self-hosted Mac: stable Rust with rustfmt and clippy is already installed.
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --release
+      - run: nice -n 10 cargo clippy --workspace --all-targets -- -D warnings
+      - run: nice -n 10 cargo test --workspace --release
 
   regression:
     name: strategy regression gate
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, vickrey]
     needs: check
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p vickrey-sim --bin vickrey-arena
+      - run: nice -n 10 cargo build --release -p vickrey-sim --bin vickrey-arena
       - name: Six-seat table vs the calibrated field
-        run: ./target/release/vickrey-arena bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0
+        run: nice -n 10 ./target/release/vickrey-arena bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0
       - name: First-price table
-        run: ./target/release/vickrey-arena --first-price bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 24 --seed 9 --max-place 2.0
+        run: nice -n 10 ./target/release/vickrey-arena --first-price bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 24 --seed 9 --max-place 2.0
       - name: Server sims (lobby padding)
-        run: ./target/release/vickrey-arena bench --lineup vickrey,brutus,brutus,valor,cheapo,starter -n 8 --seed 5 --max-place 1.3
+        run: nice -n 10 ./target/release/vickrey-arena bench --lineup vickrey,brutus,brutus,valor,cheapo,starter -n 8 --seed 5 --max-place 1.3
