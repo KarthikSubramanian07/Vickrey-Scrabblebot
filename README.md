@@ -88,7 +88,9 @@ Vickey plays as bot **Vickey** for team **Karthik**. Within its first day in the
                        vickey-arena tune (paired, 2-batch significance)
 ```
 
-`vickey-arena evolve` refits the rivals' price model from the most recent all-real matches. It then hill-climbs both parameter profiles in the simulator, with the candidate and the incumbent at the same tables on the same seeds, and adopts a change only if it wins clearly on two independent batches. The live bot hot-reloads `config/` at the start of every match. Evolution runs on a launchd timer locally and on a six-hourly GitHub Actions job that opens a PR with any improvement. The local timer stands down on battery and whenever a tournament is open or under way, so tuning never competes with live bids for the CPU. Heads-up tables (the three-game final) get their own profile, `config/params_duel.json`, tuned separately.
+`vickey-arena evolve` refits the rivals' price model from the most recent all-real matches. It then hill-climbs both parameter profiles in the simulator, with the candidate and the incumbent at the same tables on the same seeds, and adopts a change only if it wins clearly on two independent batches. The live bot hot-reloads `config/` at the start of every match. The simulator can't model the strongest live bots, so the final word belongs to the league itself. **Live A/B testing** (`config/ab.json`) splits casual matches between the champion and a challenger, scores both arms on Swiss points, and promotes or retires the challenger once Welch's |t| ≥ 2 with 40+ matches per arm. Tournament matches always use the champion. `vickey ab-report` shows the scoreboard.
+
+Evolution runs on a launchd timer locally and on a six-hourly GitHub Actions job that opens a PR with any improvement. The local timer stands down on battery and whenever a tournament is open or under way, so tuning never competes with live bids for the CPU. Heads-up tables (the three-game final) get their own profile, `config/params_duel.json`, tuned separately.
 
 ## Repo layout
 
