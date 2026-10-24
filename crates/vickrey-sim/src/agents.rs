@@ -487,13 +487,24 @@ fn dump_all(rack: &Rack) -> Vec<String> {
 pub struct NijelloClone {
     label: String,
     rng: SmallRng,
+    /// Multiplier on the value term. Nijello's own rack quality `Q` is
+    /// richer than our partition value, so the raw clone buys ~10 tiles a
+    /// match against the live bot's 13; `VICKREY_NIJELLO_SCALE` calibrates
+    /// it (sweep in a maintenance window until letters/leftover match live).
+    scale: f64,
 }
 
 impl NijelloClone {
     pub fn new(label: &str, seed: u64) -> Self {
+        let scale = std::env::var("VICKREY_NIJELLO_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(1.0);
         NijelloClone {
             label: label.to_string(),
             rng: SmallRng::seed_from_u64(seed),
+            scale,
         }
     }
 }
@@ -515,7 +526,7 @@ impl Agent for NijelloClone {
         let dq = potential(d, &plus) - potential(d, &rack);
         let dbest = best_single(d, &plus) - best_single(d, &rack);
         let face = VALUE[letter] as f64;
-        let mut value = dq + 0.333 * dbest + 3.06 * face;
+        let mut value = self.scale * (dq + 0.333 * dbest) + 3.06 * face;
         if Some(letter) == vickrey_core::letters::index('Q') {
             let u = vickrey_core::letters::index('U').unwrap();
             if rack.count(u) == 0 {

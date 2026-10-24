@@ -16,6 +16,10 @@ log=runs/tune/window-$(date -u +%Y%m%dT%H%M).log
   nice -n 19 $A bench --lineup vickrey,nijello,nijello,ramp,sookra,flat -n 48 --seed 7
   echo "== bench: heads-up vs nijello"
   nice -n 19 $A --params config/params_duel.json bench --lineup vickrey,nijello -n 48 --seed 7
+  echo "== Nijello clone calibration sweep (live Nijello: ~13 letters, ~28 leftover, ~93 score)"
+  for k in 1.0 1.3 1.6 2.0; do
+    echo "-- scale $k"; VICKREY_NIJELLO_SCALE=$k nice -n 19 $A bench --lineup vickrey,nijello,nijello,ramp,sookra,flat -n 32 --seed 13 | grep -E "^vickrey|^nijello"
+  done
   echo "== queued A/B patches on the clone field (n 96 each)"
   python3 - <<'PY'
 import json,subprocess,os
