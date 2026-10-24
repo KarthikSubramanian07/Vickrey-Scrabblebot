@@ -62,6 +62,71 @@ impl Common {
     pub fn field(&self) -> FieldModel {
         load_field(&self.config_dir)
     }
+
+    /// Live A/B experiment (`ab.json`), if one is configured.
+    pub fn ab(&self) -> Option<AbConfig> {
+        load_ab(&self.config_dir)
+    }
+}
+
+/// A live A/B test: casual matches are split between the champion
+/// (`params.json`) and a challenger file. Tournament matches always use the
+/// champion. Assignment hashes the match id, so a restart mid-match keeps
+/// the same arm.
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+pub struct AbConfig {
+    /// Challenger params file, relative to the config dir.
+    pub challenger: String,
+    /// Share of casual matches that use the challenger.
+    #[serde(default = "half")]
+    pub share: f64,
+    /// Free-form label written to telemetry.
+    #[serde(default)]
+    pub name: String,
+}
+
+fn half() -> f64 {
+    0.5
+}
+
+pub fn load_ab(dir: &Path) -> Option<AbConfig> {
+    let path = dir.join("ab.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    match serde_json::from_str::<AbConfig>(&text) {
+        Ok(ab) if dir.join(&ab.challenger).exists() => Some(ab),
+        Ok(ab) => {
+            tracing::warn!("ab.json names missing challenger {}", ab.challenger);
+            None
+        }
+        Err(e) => {
+            tracing::warn!("ignoring {}: {e}", path.display());
+            None
+        }
+    }
+}
+
+/// Whether `match_id` goes to the challenger arm.
+pub fn ab_pick(match_id: u64, share: f64) -> bool {
+    let mut x = match_id.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^= x >> 31;
+    (x % 10_000) as f64 / 10_000.0 < share
+}
+
+/// Params for a casual match under an A/B test: `(params, arm label)`.
+pub fn ab_params(dir: &Path, ab: &AbConfig, match_id: u64) -> Option<(Params, String)> {
+    if !ab_pick(match_id, ab.share) {
+        return None;
+    }
+    let path = dir.join(&ab.challenger);
+    match Params::load(&path) {
+        Ok(p) => Some((p, format!("B:{}", ab.challenger))),
+        Err(e) => {
+            tracing::warn!("ignoring challenger {}: {e}", path.display());
+            None
+        }
+    }
 }
 
 pub fn default_token_path() -> PathBuf {

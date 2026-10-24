@@ -5,7 +5,9 @@
 //! - `vickey setup`    zero-browser onboarding: team, bot, credential, token file
 //! - `vickey status`   who we are, rating, lobby, tournaments
 //! - `vickey replay`   what our brain would have bid in a past match
+//! - `vickey ab-report` the live A/B scoreboard (champion vs challenger)
 
+mod ab;
 mod config;
 mod conn;
 mod engine;
@@ -77,6 +79,8 @@ enum Cmd {
     },
     /// Show our bot, rating, the open lobby and tournaments (works anonymously).
     Status,
+    /// Live A/B scoreboard: champion (params.json) vs the challenger in ab.json.
+    AbReport,
     /// Rebuild a match from public history and print the bids our brain would make.
     Replay {
         match_id: u64,
@@ -128,6 +132,10 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Cmd::Setup { team, bot, force } => setup::setup(&cli.common, &team, &bot, force),
         Cmd::Status => status::status(&cli.common),
+        Cmd::AbReport => {
+            ab::report(&cli.common.config_dir, &cli.common.runs_dir);
+            Ok(())
+        }
         Cmd::Replay { match_id, as_bot } => replay::replay(&cli.common, match_id, as_bot),
     }
 }
