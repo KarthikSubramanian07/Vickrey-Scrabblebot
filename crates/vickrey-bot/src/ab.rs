@@ -21,6 +21,14 @@ use std::path::Path;
 pub const MIN_MATCHES: usize = 40;
 /// |t| needed to act.
 pub const T_DECIDE: f64 = 2.0;
+/// Sequential early stops: a clearly losing challenger is retired after
+/// `EARLY_N` matches per arm at t ≤ −`T_EARLY_REJECT`; an overwhelming one is
+/// promoted after `EARLY_PROMOTE_N` at t ≥ `T_EARLY_PROMOTE`. The stricter
+/// bars keep the false-decision rate in check despite repeated looks.
+pub const EARLY_N: usize = 15;
+pub const T_EARLY_REJECT: f64 = 2.5;
+pub const EARLY_PROMOTE_N: usize = 25;
+pub const T_EARLY_PROMOTE: f64 = 3.0;
 
 #[derive(Deserialize)]
 struct Line {
@@ -128,10 +136,14 @@ fn log(runs: &Path, v: serde_json::Value) {
 /// something was decided.
 pub fn maybe_decide(config_dir: &Path, runs_dir: &Path, ab: &AbConfig) -> Option<String> {
     let (a, b) = scoreboard(&runs_dir.join("summary.jsonl"), ab);
-    if a.n < MIN_MATCHES || b.n < MIN_MATCHES {
+    let n = a.n.min(b.n);
+    if n < EARLY_N {
         return None;
     }
     let t = welch_t(&a, &b);
+    let full = n >= MIN_MATCHES;
+    let promote = (full && t >= T_DECIDE) || (n >= EARLY_PROMOTE_N && t >= T_EARLY_PROMOTE);
+    let reject = (full && t <= -T_DECIDE) || t <= -T_EARLY_REJECT;
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -143,7 +155,7 @@ pub fn maybe_decide(config_dir: &Path, runs_dir: &Path, ab: &AbConfig) -> Option
             "b": {"n": b.n, "points": b.mean_points, "place": b.mean_place, "win": b.win_rate, "score": b.mean_score},
         })
     };
-    if t >= T_DECIDE {
+    if promote {
         let champ = config_dir.join("params.json");
         let _ = std::fs::copy(&champ, config_dir.join("params.prev.json"));
         if std::fs::copy(config_dir.join(&ab.challenger), &champ).is_ok() {
@@ -154,7 +166,7 @@ pub fn maybe_decide(config_dir: &Path, runs_dir: &Path, ab: &AbConfig) -> Option
                 ab.challenger, b.mean_points, a.mean_points, b.n, a.n
             ));
         }
-    } else if t <= -T_DECIDE {
+    } else if reject {
         let _ = std::fs::remove_file(config_dir.join("ab.json"));
         log(runs_dir, record("rejected"));
         return Some(format!(
@@ -311,6 +323,30 @@ mod tests {
         };
         let (a, b) = scoreboard(&dir.join("summary.jsonl"), &ab);
         assert_eq!((a.n, b.n), (1, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retires_a_clearly_losing_challenger_early() {
+        let dir = std::env::temp_dir().join(format!("vickrey-abe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("params.json"), "{}").unwrap();
+        std::fs::write(dir.join("b.json"), "{}").unwrap();
+        std::fs::write(
+            dir.join("ab.json"),
+            "{\"challenger\": \"b.json\", \"started_ms\": 0}",
+        )
+        .unwrap();
+        let ab = crate::config::load_ab(&dir).unwrap();
+        let mut rows = Vec::new();
+        for i in 0..16 {
+            rows.push(("A", 1 + i % 2));
+            rows.push(("B:b.json", 5 + i % 2));
+        }
+        write(&dir, &rows);
+        let msg = maybe_decide(&dir, &dir, &ab).unwrap();
+        assert!(msg.contains("rejected"), "{msg}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
