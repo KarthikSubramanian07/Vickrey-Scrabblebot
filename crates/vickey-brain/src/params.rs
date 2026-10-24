@@ -43,6 +43,8 @@ pub struct Params {
     pub cheap_grab_value: f64,
     /// First-price: grid search the bid that maximises surplus.
     pub first_price_shade: bool,
+    /// Cap bids on J/K/Q/X/Z at this multiple of the market median (0 = off).
+    pub premium_cap_mult: f64,
     /// Weight on denying the strongest rival (relative-score games).
     pub deny_weight: f64,
     /// Denial only kicks in at tables this small or smaller.
@@ -91,6 +93,7 @@ impl Default for Params {
             min_value: 0.3,
             cheap_grab_value: 0.8,
             first_price_shade: true,
+            premium_cap_mult: 0.0,
             deny_weight: 0.5,
             deny_max_players: 2,
             min_play_len: 6,

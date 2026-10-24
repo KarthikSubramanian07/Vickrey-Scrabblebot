@@ -437,6 +437,12 @@ impl Brain {
         if amount < 1 && value >= self.params.cheap_grab_value {
             amount = 1;
         }
+        // Premium letters (J, K, Q, X, Z) need specific words to pay off; the
+        // live league's best bot refuses to pay much over market for them.
+        if self.params.premium_cap_mult > 0.0 && VALUE[letter] >= 5 {
+            let cap = (self.params.premium_cap_mult * d.median).ceil() as i64;
+            amount = amount.min(cap.max(1));
+        }
         let amount = amount.clamp(0, balance);
         BidDecision {
             amount,
@@ -637,6 +643,38 @@ mod tests {
         // Rich: keep building towards a 7-letter word.
         t.on_participant(1, 90, 48);
         assert!(b.plays(&t).is_empty());
+    }
+
+    #[test]
+    fn premium_cap_limits_premium_bids_only() {
+        let capped = Params {
+            premium_cap_mult: 0.5,
+            ..Params::default()
+        };
+        let mut b = Brain::new(capped, FieldModel::default(), 4);
+        // Z completes a 7-letter word: valuable, but capped at half the market.
+        let t = tracker_with("ABLEIT", 20);
+        let z = b.bid(&t, index('Z').unwrap());
+        let median = b
+            .market
+            .dist(index('Z').unwrap(), t.progress(), 5, 100)
+            .median;
+        assert!(
+            (z.amount as f64) <= (0.5 * median).ceil(),
+            "{z:?} median {median}"
+        );
+        // Common letters are untouched.
+        let mut free = Brain::new(Params::default(), FieldModel::default(), 4);
+        let mut capped2 = Brain::new(
+            Params {
+                premium_cap_mult: 0.5,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            4,
+        );
+        let e = index('E').unwrap();
+        assert_eq!(free.bid(&t, e).amount, capped2.bid(&t, e).amount);
     }
 
     #[test]
