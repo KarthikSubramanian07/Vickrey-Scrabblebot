@@ -27,6 +27,9 @@ use rand::{Rng, SeedableRng};
 use vickrey_core::letters::VALUE;
 use vickrey_core::{dictionary, Dictionary, Letter, Rack, Solver, ALPHABET};
 
+/// Anchor bids are sent before the full valuation; see `Brain::anchor_bid`.
+const ANCHOR_SCALE: f64 = 0.85;
+
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct BidDecision {
     pub amount: i64,
@@ -464,7 +467,11 @@ impl Brain {
             return 0;
         }
         let lambda = self.last_lambda.max(self.params.lambda_min).max(1e-3);
-        let mut truthful = value / lambda;
+        // The table shrinks toward the letter prior, which runs hot on premium
+        // letters: live, the raw anchor sat above the full bid 52% of the time
+        // and 30%+ above it on 28% of auctions. Bid a little under it; the
+        // full decision replaces this whenever it lands.
+        let mut truthful = ANCHOR_SCALE * value / lambda;
         if self.params.opening_shade > 0.0 && t.progress() < 0.25 {
             truthful *= 1.0 - self.params.opening_shade.min(0.9);
         }

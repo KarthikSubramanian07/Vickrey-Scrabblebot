@@ -990,6 +990,13 @@ impl MatchCtx {
     }
 }
 
+/// A bid round trip above this is a strike against the connection.
+const LAG_RTT_MS: f64 = 500.0;
+/// Strikes in a row that replace the connection.
+const LAG_STRIKES: u32 = 3;
+/// A bid rejected as late counts only if we sent it with this much time left.
+const LATE_REJECT_MIN_LEFT_MS: i64 = 400;
+
 /// How early to dump the final partition. The server runs reducers one at
 /// a time per database; at peak load a call can take seconds, and a dump
 /// that lands after the last auction closes scores nothing.
@@ -1047,6 +1054,9 @@ pub struct Engine {
     reconnects: u64,
     reconnect_at: Instant,
     connecting_since: Instant,
+    /// Consecutive bids that came back slow or rejected as late.
+    lag_strikes: u32,
+    last_forced_reconnect: Instant,
     last_join: Option<Instant>,
     register_tries: HashMap<u64, Instant>,
     poke: bool,
@@ -1089,6 +1099,8 @@ impl Engine {
             reconnects: 0,
             reconnect_at: now,
             connecting_since: now,
+            lag_strikes: 0,
+            last_forced_reconnect: now - Duration::from_secs(600),
             last_join: None,
             register_tries: HashMap::new(),
             poke: false,
@@ -1456,8 +1468,10 @@ impl Engine {
                 sent,
                 result,
             } => {
-                self.note_rtt(ms(sent));
-                self.on_bid_done(match_id, auction_id, amount, result)
+                let rtt = ms(sent);
+                self.note_rtt(rtt);
+                let late = self.on_bid_done(match_id, auction_id, amount, result);
+                self.lag_check(rtt, late);
             }
             Ev::JoinDone(r) => match r {
                 Ok(()) => info!("joined the lobby"),
@@ -1663,6 +1677,35 @@ impl Engine {
         ctx.on_open(&env, &a, bag_total, &mut self.lat);
     }
 
+    /// Reducer-path health. Both live ghost storms (21:05 and 21:56 UTC on
+    /// Oct 24) ran on a connection whose reducer calls took 600-1500 ms from
+    /// its first second while auction opens still arrived on time, and ended
+    /// the moment the connection was replaced. Three consecutive bids that
+    /// are slow or rejected as late force a fresh connection, at most once a
+    /// minute; matches are rebuilt from the server on reconnect.
+    fn lag_check(&mut self, rtt: f64, rejected_late: bool) {
+        if rtt > LAG_RTT_MS || rejected_late {
+            self.lag_strikes += 1;
+        } else {
+            self.lag_strikes = 0;
+        }
+        if self.lag_strikes >= LAG_STRIKES
+            && self.state == ConnState::Ready
+            && self.last_forced_reconnect.elapsed() > Duration::from_secs(60)
+        {
+            warn!(
+                "reducer path lagging ({} consecutive bids slow or late, last {rtt:.0} ms): replacing the connection",
+                self.lag_strikes
+            );
+            self.lag_strikes = 0;
+            self.last_forced_reconnect = Instant::now();
+            self.schedule_reconnect("reducer path lagging".into());
+            // Not a failure of ours: reconnect now, without backoff.
+            self.failures = 0;
+            self.reconnect_at = Instant::now();
+        }
+    }
+
     fn note_rtt(&mut self, rtt: f64) {
         self.rtts.push_back(rtt);
         while self.rtts.len() > 40 {
@@ -1718,20 +1761,26 @@ impl Engine {
         );
     }
 
+    /// Handle a bid's reducer result. Returns true when the bid was rejected
+    /// as late although we sent it with time to spare: the reducer path, not
+    /// our decision, was slow.
     fn on_bid_done(
         &mut self,
         match_id: u64,
         auction_id: u64,
         amount: i64,
         result: std::result::Result<(), String>,
-    ) {
-        let Err(e) = result else { return };
+    ) -> bool {
+        let Err(e) = result else { return false };
         warn!("m{match_id} bid {amount} on auction {auction_id} rejected: {e}");
         let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) else {
-            return;
+            return false;
         };
+        let mut late = false;
         if let Some(rec) = ctx.recs.get_mut(&auction_id) {
             rec.bid_error = Some(e.clone());
+            late = (e.contains("Auction closed") || e.contains("window expired"))
+                && rec.ms_left.unwrap_or(0) > LATE_REJECT_MIN_LEFT_MS;
         }
         // A word we counted on failed, so the coins never arrived: rebid what we have.
         let still_open = ctx
@@ -1768,6 +1817,7 @@ impl Engine {
                 info!("m{match_id} rebid {retry} on auction {auction_id}");
             }
         }
+        late
     }
 
     fn finalize(&mut self, match_id: u64) {
