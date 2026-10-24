@@ -1,0 +1,438 @@
+//! The decision maker: what a letter is worth, what to bid, what to play.
+//!
+//! **Valuation.** A rack's worth is what its final dump would score: the
+//! best set of disjoint words (`vickey_core::solver`). Mid-match we also
+//! expect to win more letters, so we sample futures — the letters we might
+//! still buy, drawn from the unseen pool — and a letter's marginal value is
+//! `E[T(R + L + F)] − E[T(R + F)]` over shared samples (common random
+//! numbers keep the difference low-variance).
+//!
+//! **Bidding.** Spending never lowers score; leftover coins are worthless.
+//! So the only question is pacing: convert points to coins at a rate `λ`
+//! (points per coin) chosen so the expected spend over the remaining
+//! auctions matches the budget, then bid `V / λ`. Under Vickrey that
+//! truthful bid is optimal; under first-price we pick the bid maximising
+//! expected surplus against the opposing-bid distribution.
+//!
+//! **Playing.** Words only score if played before the match ends, and coins
+//! from a play buy more letters. We play a word mid-match when its reward
+//! plus that liquidity beats the expected value of holding its letters.
+//! When the last auction opens we dump the exact best partition.
+
+use crate::market::{BidDist, FieldModel, Market};
+use crate::params::Params;
+use crate::tracker::{AuctionKind, Tracker};
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use vickey_core::letters::VALUE;
+use vickey_core::{dictionary, Dictionary, Letter, Rack, Solver, ALPHABET};
+
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct BidDecision {
+    pub amount: i64,
+    /// Marginal value in points.
+    pub value: f64,
+    /// Points per coin used to convert.
+    pub lambda: f64,
+    /// Modelled chance of winning at `amount`.
+    pub p_win: f64,
+}
+
+pub struct Brain {
+    pub params: Params,
+    pub market: Market,
+    dict: &'static Dictionary,
+    rng: SmallRng,
+    /// Marginal value per letter for the current rack (pacing input).
+    table: [f64; ALPHABET],
+    table_rack: Option<Rack>,
+    table_at: u32,
+    pub last_lambda: f64,
+}
+
+impl Brain {
+    pub fn new(params: Params, field: FieldModel, seed: u64) -> Self {
+        Brain {
+            params,
+            market: Market::new(field),
+            dict: dictionary(),
+            rng: SmallRng::seed_from_u64(seed),
+            table: [0.0; ALPHABET],
+            table_rack: None,
+            table_at: 0,
+            last_lambda: 0.3,
+        }
+    }
+
+    /// Forget per-match state.
+    pub fn start_match(&mut self) {
+        let field = self.market.field.clone();
+        self.market = Market::new(field);
+        self.table_rack = None;
+        self.last_lambda = 0.3;
+    }
+
+    // ------------------------------------------------------------ valuation
+
+    fn terminal(&self, rack: &Rack) -> f64 {
+        if self.params.solve_nodes == 0 {
+            vickey_core::solver::greedy(self.dict, rack).score as f64
+        } else {
+            Solver::with_budget(self.dict, self.params.solve_nodes)
+                .solve(rack)
+                .score as f64
+        }
+    }
+
+    /// Future auctions whose letters we could still play (the last never can).
+    fn usable_future(t: &Tracker) -> u32 {
+        t.bag_left.saturating_sub(1)
+    }
+
+    /// How many more letters we expect to win after the current auction.
+    fn expected_wins(&self, t: &Tracker) -> f64 {
+        let n = Self::usable_future(t) as f64;
+        if n <= 0.0 {
+            return 0.0;
+        }
+        let balance = t.my_balance().max(0) as f64;
+        let budget = balance * (1.0 + self.params.income_factor * (1.0 - t.progress()));
+        let opp = t.n_players().saturating_sub(1).max(1);
+        let unseen = t.unseen();
+        let total = unseen.len().max(1) as f64;
+        let mut avg_price = 0.0;
+        for l in 0..ALPHABET {
+            let w = unseen.0[l] as f64 / total;
+            if w > 0.0 {
+                avg_price += w * self
+                    .market
+                    .dist(l, t.progress(), opp, t.max_opponent_balance())
+                    .median;
+            }
+        }
+        let fair_share = n / t.n_players().max(1) as f64;
+        let affordable = budget / avg_price.max(1.0);
+        (affordable.min(n).max(fair_share * 0.25) * self.params.win_share_scale).min(n)
+    }
+
+    fn sample_futures(&mut self, unseen: &Rack, k: usize, n: usize) -> Vec<Rack> {
+        let pool: Vec<Letter> = unseen.letters().collect();
+        let k = k.min(pool.len());
+        let mut out = Vec::with_capacity(n);
+        let mut buf = pool.clone();
+        for _ in 0..n {
+            let mut f = Rack::EMPTY;
+            for i in 0..k {
+                let j = self.rng.gen_range(i..buf.len());
+                buf.swap(i, j);
+                f.add(buf[i]);
+            }
+            out.push(f);
+        }
+        out
+    }
+
+    fn future_size(&self, t: &Tracker) -> usize {
+        let k = self.expected_wins(t) * self.params.choice_mult;
+        (k.round() as usize)
+            .min(self.params.max_future)
+            .min(Self::usable_future(t) as usize)
+    }
+
+    /// Marginal values of each letter in `letters` for rack `rack`, and the
+    /// base expectation, over `samples` shared futures.
+    pub fn marginal_values(
+        &mut self,
+        t: &Tracker,
+        rack: &Rack,
+        letters: &[Letter],
+        samples: usize,
+    ) -> (f64, Vec<f64>) {
+        // The open auction's letter is already revealed, so it is not in `unseen`.
+        let unseen = t.unseen();
+        let k = self.future_size(t);
+        let futures = if k == 0 {
+            vec![Rack::EMPTY]
+        } else {
+            self.sample_futures(&unseen, k, samples.max(1))
+        };
+        let mut base = 0.0;
+        let mut with = vec![0.0; letters.len()];
+        for f in &futures {
+            let mut r = *rack;
+            r.plus(f);
+            base += self.terminal(&r);
+            for (j, &l) in letters.iter().enumerate() {
+                with[j] += self.terminal(&r.with(l));
+            }
+        }
+        let n = futures.len() as f64;
+        (
+            base / n,
+            with.into_iter()
+                .map(|w| ((w - base) / n).max(0.0))
+                .collect(),
+        )
+    }
+
+    /// Value of letter `l` to the strongest rival we can model (for denial).
+    fn rival_value(&mut self, t: &Tracker, l: Letter) -> f64 {
+        let mut best = 0.0f64;
+        let rivals: Vec<Rack> = t.opponents().map(|p| p.known_rack()).collect();
+        for r in rivals {
+            let (_, v) = self.marginal_values(t, &r, &[l], self.params.table_samples.max(4));
+            best = best.max(v[0]);
+        }
+        best
+    }
+
+    fn refresh_table(&mut self, t: &Tracker) {
+        let stale = self.table_rack != Some(t.my_rack) || t.auctions_seen >= self.table_at + 4;
+        if !stale {
+            return;
+        }
+        let all: Vec<Letter> = (0..ALPHABET).collect();
+        let (_, v) = self.marginal_values(t, &t.my_rack.clone(), &all, self.params.table_samples);
+        for (l, x) in v.into_iter().enumerate() {
+            self.table[l] = x;
+        }
+        self.table_rack = Some(t.my_rack);
+        self.table_at = t.auctions_seen;
+    }
+
+    // ------------------------------------------------------------- bidding
+
+    fn dist(&self, t: &Tracker, l: Letter) -> BidDist {
+        self.market.dist(
+            l,
+            t.progress(),
+            t.n_players().saturating_sub(1),
+            t.max_opponent_balance(),
+        )
+    }
+
+    /// Solve for λ so expected spend over the usable auctions left matches budget.
+    fn pace(&mut self, t: &Tracker) -> f64 {
+        let p = &self.params;
+        let balance = t.my_balance().max(0) as f64;
+        // Auctions still to come whose letters we can use, including the open one.
+        let n = (Self::usable_future(t) + 1) as f64;
+        let budget = balance * (1.0 + p.income_factor * (1.0 - t.progress())) * p.spend_target;
+        let unseen = t.unseen();
+        let total = unseen.len().max(1) as f64;
+        let dists: Vec<(f64, f64, BidDist)> = (0..ALPHABET)
+            .filter(|&l| unseen.0[l] > 0)
+            .map(|l| (unseen.0[l] as f64 / total, self.table[l], self.dist(t, l)))
+            .collect();
+        let spend = |lam: f64| -> f64 {
+            dists
+                .iter()
+                .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(balance)))
+                .sum::<f64>()
+                * n
+        };
+        let (lo, hi) = (p.lambda_min, p.lambda_max);
+        if spend(lo) <= budget {
+            return lo;
+        }
+        if spend(hi) >= budget {
+            return hi;
+        }
+        // spend() falls as λ rises; bisect in log space.
+        let (mut a, mut b) = (lo.ln(), hi.ln());
+        for _ in 0..30 {
+            let m = 0.5 * (a + b);
+            if spend(m.exp()) > budget {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        (0.5 * (a + b)).exp()
+    }
+
+    /// Decide our bid on the open auction for `letter`.
+    pub fn bid(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
+        let balance = t.my_balance().max(0);
+        if t.is_last_auction() || balance <= 0 {
+            return BidDecision::default();
+        }
+        self.refresh_table(t);
+        let (_, v) = self.marginal_values(t, &t.my_rack.clone(), &[letter], self.params.samples);
+        let mut value = v[0];
+        self.table[letter] = value;
+        if self.params.deny_weight > 0.0 && t.n_players() <= self.params.deny_max_players {
+            value += self.params.deny_weight * self.rival_value(t, letter);
+        }
+        let lambda = self.pace(t);
+        self.last_lambda = lambda;
+        if value < self.params.min_value {
+            let amount = if value >= self.params.cheap_grab_value.min(self.params.min_value)
+                && value > 0.0
+            {
+                1
+            } else {
+                0
+            };
+            let d = self.dist(t, letter);
+            return BidDecision {
+                amount,
+                value,
+                lambda,
+                p_win: d.p_win(amount as f64),
+            };
+        }
+        let d = self.dist(t, letter);
+        let truthful = (value / lambda).min(balance as f64);
+        let mut amount = match t.kind {
+            AuctionKind::Vickrey => truthful.floor() as i64,
+            AuctionKind::FirstPrice if self.params.first_price_shade => {
+                // argmax_b (v/λ − b) · P(win | b)
+                let mut best = (0.0, 0i64);
+                for b in 1..=(truthful.floor() as i64) {
+                    let s = (truthful - b as f64) * d.p_win(b as f64);
+                    if s > best.0 {
+                        best = (s, b);
+                    }
+                }
+                best.1
+            }
+            AuctionKind::FirstPrice => truthful.floor() as i64,
+        };
+        if amount < 1 && value >= self.params.cheap_grab_value {
+            amount = 1;
+        }
+        let amount = amount.clamp(0, balance);
+        BidDecision {
+            amount,
+            value,
+            lambda,
+            p_win: d.p_win(amount as f64),
+        }
+    }
+
+    /// Update the price model with a closed auction.
+    pub fn observe_result(&mut self, t: &Tracker, letter: Letter, winner: Option<u64>, paid: i64) {
+        let we_won = winner == Some(t.my_id);
+        if winner.is_some() {
+            self.market.observe(
+                letter,
+                t.progress(),
+                paid,
+                we_won,
+                t.n_players().saturating_sub(1),
+            );
+        }
+    }
+
+    // ------------------------------------------------------------- playing
+
+    /// Words to play now, mid-match. Empty when holding is better.
+    pub fn plays(&mut self, t: &Tracker) -> Vec<&'static str> {
+        if t.is_last_auction() {
+            return self.final_plays(&t.my_rack);
+        }
+        let p = self.params.clone();
+        let mut rack = t.my_rack;
+        let mut out = Vec::new();
+        let k = self.future_size(t);
+        let futures = if k == 0 {
+            vec![Rack::EMPTY]
+        } else {
+            self.sample_futures(&t.unseen(), k, p.samples.max(8) / 2)
+        };
+        let eval = |me: &Brain, r: &Rack| -> f64 {
+            futures
+                .iter()
+                .map(|f| {
+                    let mut x = *r;
+                    x.plus(f);
+                    me.terminal(&x)
+                })
+                .sum::<f64>()
+                / futures.len() as f64
+        };
+        for _ in 0..3 {
+            let mut cands: Vec<u32> = self.dict.candidates(&rack, p.min_play_len);
+            if cands.is_empty() {
+                break;
+            }
+            cands.sort_unstable_by(|&a, &b| self.dict.sig(b).reward.cmp(&self.dict.sig(a).reward));
+            cands.truncate(p.play_candidates);
+            let hold = eval(self, &rack);
+            let mut best: Option<(f64, u32)> = None;
+            for &i in &cands {
+                let s = self.dict.sig(i);
+                let mut rest = rack;
+                rest.sub(&s.rack);
+                let gain = s.reward as f64 * (1.0 + p.liquidity * self.last_lambda)
+                    + eval(self, &rest)
+                    - hold;
+                if gain > p.play_margin && best.map_or(true, |(g, _)| gain > g) {
+                    best = Some((gain, i));
+                }
+            }
+            let Some((_, i)) = best else { break };
+            let s = self.dict.sig(i);
+            rack.sub(&s.rack);
+            out.push(s.word);
+        }
+        out
+    }
+
+    /// Everything we can play, for the last auction.
+    pub fn final_plays(&self, rack: &Rack) -> Vec<&'static str> {
+        let mut s = Solver::with_deadline(self.dict, self.params.final_solve_ms);
+        s.solve(rack).word_strings(self.dict)
+    }
+
+    /// Face value per letter, for logging.
+    pub fn face(l: Letter) -> u32 {
+        VALUE[l]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vickey_core::index;
+
+    fn tracker_with(rack: &str, bag_left: u32) -> Tracker {
+        let mut t = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 5);
+        t.set_my_rack(Rack::from_word(rack));
+        t.on_auction_open(index('E').unwrap(), bag_left);
+        t
+    }
+
+    #[test]
+    fn last_auction_is_worthless() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 1);
+        let t = tracker_with("QUIZAS", 0);
+        assert_eq!(b.bid(&t, index('E').unwrap()).amount, 0);
+    }
+
+    #[test]
+    fn completing_letter_is_valued() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 1);
+        // CAZIQU + E = CAZIQUE (81 points) right before the end.
+        let t = tracker_with("CAZIQU", 1);
+        let d = b.bid(&t, index('E').unwrap());
+        assert!(d.value > 40.0, "{d:?}");
+        assert!(d.amount >= 50, "{d:?}");
+    }
+
+    #[test]
+    fn final_dump_plays_everything_useful() {
+        let b = Brain::new(Params::default(), FieldModel::default(), 1);
+        let words = b.final_plays(&Rack::from_word("CAZIQUEXI"));
+        assert!(words.iter().any(|w| w.len() == 7));
+    }
+
+    #[test]
+    fn bids_never_exceed_balance() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 3);
+        let mut t = tracker_with("CAZIQU", 1);
+        t.on_participant(1, 7, 0);
+        assert!(b.bid(&t, index('E').unwrap()).amount <= 7);
+    }
+}
