@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
-members = ["crates/vickey-core", "crates/vickey-brain", "crates/vickey-sim", "crates/vickey-bot"]
+members = ["crates/vickrey-core", "crates/vickrey-brain", "crates/vickrey-sim", "crates/vickrey-bot"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Karthik Subramanian <winnerkarthik07@gmail.com>"]
-repository = "https://github.com/KarthikSubramanian07/Vickey-Scrabblebot"
+repository = "https://github.com/KarthikSubramanian07/Vickrey-Scrabblebot"
 rust-version = "1.85"
 
 [workspace.dependencies]
-vickey-core = { path = "crates/vickey-core" }
-vickey-brain = { path = "crates/vickey-brain" }
-vickey-sim = { path = "crates/vickey-sim" }
+vickrey-core = { path = "crates/vickrey-core" }
+vickrey-brain = { path = "crates/vickrey-brain" }
+vickrey-sim = { path = "crates/vickrey-sim" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = { version = "0.8", features = ["small_rng"] }

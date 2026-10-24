@@ -2,10 +2,10 @@
 # Build the simulator and load the 3-hourly self-improvement LaunchAgent.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABEL="com.vickey.evolve"
+LABEL="com.vickrey.evolve"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
-(cd "$ROOT" && cargo build --release -p vickey-sim --bin vickey-arena)
+(cd "$ROOT" && cargo build --release -p vickrey-sim --bin vickrey-arena)
 mkdir -p "$ROOT/runs" "$HOME/Library/LaunchAgents"
 # EVOLVE_PROFILES=multi skips the heads-up profile (e.g. while a dedicated duel tuner runs).
 PROFILES="${EVOLVE_PROFILES:-multi,duel}"

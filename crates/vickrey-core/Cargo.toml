@@ -1,0 +1,14 @@
+[package]
+name = "vickrey-core"
+description = "Rules, racks, dictionary index and the exact word-partition solver for ScrabbleBot."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+rustc-hash = "2"
+
+[dev-dependencies]
+rand.workspace = true

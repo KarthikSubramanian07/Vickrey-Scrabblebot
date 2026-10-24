@@ -3,12 +3,12 @@
 #
 # Clones the server repo (or reuses $SCRABBLEBOT_SRC), installs the module's
 # npm dependencies, and runs `spacetime generate --lang rust` into
-# crates/vickey-bot/src/module_bindings. Requires git, npm and the spacetime
-# CLI (2.13.x, matching spacetimedb-sdk in crates/vickey-bot/Cargo.toml).
+# crates/vickrey-bot/src/module_bindings. Requires git, npm and the spacetime
+# CLI (2.13.x, matching spacetimedb-sdk in crates/vickrey-bot/Cargo.toml).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/crates/vickey-bot/src/module_bindings"
+OUT="$ROOT/crates/vickrey-bot/src/module_bindings"
 REPO_URL="${SCRABBLEBOT_REPO:-https://github.com/clockworklabs/scrabblebot.git}"
 SRC="${SCRABBLEBOT_SRC:-}"
 
@@ -32,4 +32,4 @@ spacetime generate --lang rust \
   --module-path "$SRC/spacetimedb" \
   --out-dir "$OUT" -y
 
-echo "done; rebuild with: cargo build --release -p vickey-bot"
+echo "done; rebuild with: cargo build --release -p vickrey-bot"
