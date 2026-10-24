@@ -1,5 +1,12 @@
 [
   {
+    "name": "volume floor 0.8x market on fitting ordinary letters",
+    "patch": {
+      "volume_floor": 0.8,
+      "volume_min_value": 2.0
+    }
+  },
+  {
     "name": "exact endgame valuation (exact solver when no futures, racks <18)",
     "patch": {
       "exact_terminal_max": 18
