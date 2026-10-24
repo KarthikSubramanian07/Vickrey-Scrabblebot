@@ -17,6 +17,9 @@ pub struct Params {
     /// Work cap per valuation (letter² units, ~1.7 µs each); bounds latency
     /// on huge racks. The main valuation and the table each get this much.
     pub work_budget: u64,
+    /// Racks this small (or smaller) are valued with the exact solver
+    /// instead of greedy (0 = off).
+    pub exact_terminal_max: usize,
     /// Node budget per terminal solve inside the Monte Carlo (0 = greedy).
     pub solve_nodes: u64,
     /// Scales how many future letters we expect to win.
@@ -87,6 +90,7 @@ impl Default for Params {
             table_samples: 10,
             table_shrink: 0.5,
             work_budget: 70_000,
+            exact_terminal_max: 0,
             solve_nodes: 0,
             win_share_scale: 1.0,
             choice_mult: 1.6,
