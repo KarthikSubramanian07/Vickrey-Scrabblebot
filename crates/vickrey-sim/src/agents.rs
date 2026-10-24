@@ -586,7 +586,8 @@ impl Agent for NijelloClone {
 
 /// SookraBot (StephenSook/sookrabot, branch `round3`). Bid = `floor(κ·Δvalue)`,
 /// `κ = 3.8·clamp(√r, 0.5, 3)` with `r = (balance/auctionsLeft)/(100/68)`,
-/// ×0.55 for the first 28 auctions, ×2 once fewer than 8 tiles remain. Holds
+/// ×0.7 for the first 28 auctions (0.55 until 22:48 UTC Oct 24), ×2 once
+/// fewer than 8 tiles remain. Holds
 /// every word for the final flush (last three auctions) except a liquidity
 /// word when the balance drops under 15.
 pub struct SookraClone {
@@ -623,7 +624,7 @@ impl Agent for SookraClone {
         let r = (balance as f64 / auctions_left) / (100.0 / 68.0);
         let mut kappa = 3.8 * r.sqrt().clamp(0.5, 3.0);
         if t.auctions_seen < 28 {
-            kappa *= 0.55;
+            kappa *= 0.7;
         }
         if t.bag_left < 8 {
             kappa *= 2.0;
@@ -653,11 +654,11 @@ impl Agent for SookraClone {
 }
 
 /// Gaucho (JoaquinGiorgis/scrabblebot-gaucho, `params/vickrey.json`, champion
-/// of 22:02 UTC). Bid = `0.937·Δpotential + 1.93·face + 3.128 +
-/// 1.224·balance/auctionsLeft`.
-/// Never plays a word paying under 40 unless nearly broke; otherwise plays
+/// 87b52ee of 23:00 UTC). Bid = `0.968·Δpotential + 2.192·face + 3.284 +
+/// 1.063·balance/auctionsLeft`.
+/// Never plays a word paying under 35 unless nearly broke; otherwise plays
 /// when `reward + potential(rest) ≥ 0.934·potential(rack)`; flushes the rack
-/// as the last playable auction opens.
+/// with two playable auctions left.
 pub struct GauchoClone {
     label: String,
 }
@@ -684,15 +685,15 @@ impl Agent for GauchoClone {
         let rack = t.my_rack;
         let dv = potential(d, &rack.with(letter)) - potential(d, &rack);
         let auctions_left = (t.bag_left + 1) as f64;
-        let bid = 0.937 * dv
-            + 1.93 * VALUE[letter] as f64
-            + 3.128
-            + 1.224 * balance as f64 / auctions_left;
+        let bid = 0.968 * dv
+            + 2.192 * VALUE[letter] as f64
+            + 3.284
+            + 1.063 * balance as f64 / auctions_left;
         (bid.floor() as i64).clamp(0, balance)
     }
 
     fn plays(&mut self, t: &Tracker) -> Vec<String> {
-        if t.bag_left <= 1 {
+        if t.bag_left <= 2 {
             return dump_all(&t.my_rack);
         }
         let d = dictionary();
@@ -701,7 +702,7 @@ impl Agent for GauchoClone {
         let mut out = Vec::new();
         let base = potential(d, &r);
         while let Some(s) = d.best_word(&r, 1) {
-            if (s.reward as f64) < 40.0 && balance >= 9.9 {
+            if (s.reward as f64) < 34.6 && balance >= 7.8 {
                 break;
             }
             let mut rest = r;
