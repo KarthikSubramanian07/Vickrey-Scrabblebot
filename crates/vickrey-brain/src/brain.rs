@@ -524,6 +524,16 @@ impl Brain {
             let cap = (self.params.premium_cap_mult * d.median).ceil() as i64;
             amount = amount.min(cap.max(1));
         }
+        // No rival can bid more than their balance, so under Vickrey any bid
+        // above the richest rival's balance + 1 wins with the same payment.
+        // Clamping there is strictly dominant and makes all-in bids cost
+        // nothing extra against a broke table.
+        let rival_cap = t.max_opponent_balance().max(0) + 1;
+        let amount = if matches!(t.kind, AuctionKind::Vickrey) {
+            amount.min(rival_cap)
+        } else {
+            amount
+        };
         let amount = amount.clamp(0, balance);
         BidDecision {
             amount,
@@ -872,6 +882,26 @@ mod tests {
         t2.on_participant(1, 100, 0);
         let mut b2 = Brain::new(p, FieldModel::default(), 8);
         assert!(b2.bid(&t2, e).amount < 100);
+    }
+
+    #[test]
+    fn vickrey_bids_never_exceed_the_richest_rival_plus_one() {
+        let e = index('E').unwrap();
+        let mut t = tracker_with("CAZIQU", 4);
+        t.on_participant(1, 80, 0);
+        for id in 2..=6 {
+            t.on_participant(id, 9, 0);
+        }
+        let mut b = Brain::new(
+            Params {
+                endgame_allin_auctions: 6,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            8,
+        );
+        // All-in would say 80; the richest rival has 9, so 10 wins just the same.
+        assert_eq!(b.bid(&t, e).amount, 10);
     }
 
     #[test]
