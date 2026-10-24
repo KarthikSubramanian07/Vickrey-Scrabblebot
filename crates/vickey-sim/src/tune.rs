@@ -96,8 +96,16 @@ fn sample(
     match profile {
         Profile::Multi => {
             let mut specs = vec!["vickey@cand".to_string(), "vickey@inc".to_string()];
-            for _ in 0..4 {
-                specs.push(FIELD_FILL[rng.gen_range(0..FIELD_FILL.len())].to_string());
+            // VICKEY_FIELD=a,b,c,d pins the four rival seats (e.g. a harder field).
+            match std::env::var("VICKEY_FIELD") {
+                Ok(f) if !f.trim().is_empty() => {
+                    specs.extend(f.split(',').map(|x| x.trim().to_string()))
+                }
+                _ => {
+                    for _ in 0..4 {
+                        specs.push(FIELD_FILL[rng.gen_range(0..FIELD_FILL.len())].to_string());
+                    }
+                }
             }
             let rot = (s % specs.len() as u64) as usize;
             specs.rotate_left(rot);
