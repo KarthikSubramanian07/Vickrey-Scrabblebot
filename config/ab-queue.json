@@ -1,21 +1,14 @@
 [
   {
-    "name": "volume floor 0.8x market on fitting ordinary letters",
+    "name": "opening shade 0.2 (bid 20% under value in the hot first quarter)",
     "patch": {
-      "volume_floor": 0.8,
-      "volume_min_value": 2.0
+      "opening_shade": 0.2
     }
   },
   {
     "name": "exact endgame valuation (exact solver when no futures, racks <18)",
     "patch": {
       "exact_terminal_max": 18
-    }
-  },
-  {
-    "name": "opening shade 0.2 (bid 20% under value in the hot first quarter)",
-    "patch": {
-      "opening_shade": 0.2
     }
   },
   {
