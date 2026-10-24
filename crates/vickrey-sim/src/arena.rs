@@ -21,7 +21,7 @@ pub fn make_agent(spec: &str, params: &Params, field: &FieldModel, seed: u64) ->
         "brutus" => Box::new(ServerSim::new(SimStrategy::Aggressive, label, seed)),
         "ramp" => Box::new(LiveClone::new(label, CloneKind::Ramp, seed)),
         "flat" => Box::new(LiveClone::new(label, CloneKind::Flat, seed)),
-        other => Box::new(FieldBot::preset(other, seed)),
+        other => Box::new(FieldBot::preset_with(other, seed, field.clone())),
     }
 }
 

@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: cargo build --release -p vickrey-sim --bin vickrey-arena
       - name: Refit + tune
-        run: RAYON_NUM_THREADS=4 nice -n 12 ./target/release/vickrey-arena evolve --iters 10 --matches 24
+        run: RAYON_NUM_THREADS=2 nice -n 19 ./target/release/vickrey-arena evolve --iters 10 --matches 24
       - name: Open a PR with any improvement
         env:
           GH_TOKEN: ${{ github.token }}
