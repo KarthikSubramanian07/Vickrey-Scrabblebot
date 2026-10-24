@@ -145,6 +145,7 @@ enum Ev {
         match_id: u64,
         auction_id: u64,
         amount: i64,
+        sent: Instant,
         result: std::result::Result<(), String>,
     },
     JoinDone(std::result::Result<(), String>),
@@ -421,6 +422,9 @@ struct Env<'a> {
     mode: &'a Mode,
     slow_ms: f64,
     fast_below_ms: i64,
+    /// Dump the final partition once `bag_total` is at or below this
+    /// (0 = only on the last auction). Grows with measured reducer latency.
+    dump_bag: u32,
 }
 
 fn kind_of(t: &AuctionType) -> (AuctionKind, &'static str) {
@@ -695,6 +699,7 @@ impl MatchCtx {
         }
         if amount != old {
             let tx = env.tx.clone();
+            let sent = Instant::now();
             let (gen, match_id) = (env.gen, self.match_id);
             // A zero bid can't withdraw a sealed bid, so keep a token 1 instead.
             let send = amount.max(1);
@@ -705,6 +710,7 @@ impl MatchCtx {
                     let _ = tx.send(Msg {
                         gen,
                         ev: Ev::BidDone {
+                            sent,
                             match_id,
                             auction_id,
                             amount: send,
@@ -750,6 +756,10 @@ impl MatchCtx {
             ..Default::default()
         };
         let mut amount = 0;
+        // Inside the dump zone the end of the match is closer than a slow
+        // server can be trusted to answer: cash in everything now, and keep
+        // cashing whatever the next letters complete.
+        let dump_zone = bag_total == 0 || (bag_total != u32::MAX && bag_total <= env.dump_bag);
         if bag_total == 0 {
             // Last auction: its letter can never be played. Cash in everything.
             let words = self.brain.final_plays(&self.tracker.my_rack);
@@ -768,11 +778,26 @@ impl MatchCtx {
                 rec.rack
             );
         } else {
-            let words = self.brain.plays(&self.tracker);
+            let words = if dump_zone {
+                let w = self.brain.final_plays(&self.tracker.my_rack);
+                if !w.is_empty() {
+                    info!(
+                        "m{} early dump at bag {} (zone {}): [{}] from {}",
+                        self.match_id,
+                        bag_total,
+                        env.dump_bag,
+                        w.join(" "),
+                        self.tracker.my_rack
+                    );
+                }
+                w
+            } else {
+                self.brain.plays(&self.tracker)
+            };
             rec.plays_ms = ms(started);
             if !words.is_empty() && !stale {
                 for w in &words {
-                    self.submit_word(env, a.id, w, "mid");
+                    self.submit_word(env, a.id, w, if dump_zone { "early" } else { "mid" });
                 }
                 self.refresh(env);
             }
@@ -825,6 +850,7 @@ impl MatchCtx {
             });
             if amount > 0 && env.mode.is_live() && !stale {
                 let tx = env.tx.clone();
+                let sent = Instant::now();
                 let (gen, match_id, auction_id) = (env.gen, self.match_id, a.id);
                 match env
                     .conn
@@ -833,6 +859,7 @@ impl MatchCtx {
                         let _ = tx.send(Msg {
                             gen,
                             ev: Ev::BidDone {
+                                sent,
                                 match_id,
                                 auction_id,
                                 amount,
@@ -883,6 +910,26 @@ impl MatchCtx {
     }
 }
 
+/// How early to dump the final partition. The server runs reducers one at
+/// a time per database; at peak load a call can take seconds, and a dump
+/// that lands after the last auction closes scores nothing.
+/// Auctions-before-the-end at which to dump, from recent round trips:
+/// dump when `bag × 1 s + ~0.85 s` (time left) is under `2 × p90 + 0.3 s`.
+pub(crate) fn dump_bag_for(rtts: &std::collections::VecDeque<f64>) -> u32 {
+    if rtts.is_empty() {
+        return 0;
+    }
+    let mut v: Vec<f64> = rtts.iter().copied().collect();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p90 = v[((v.len() - 1) as f64 * 0.9).round() as usize];
+    let need_ms = 2.0 * p90 + 300.0 - 850.0;
+    if need_ms <= 0.0 {
+        0
+    } else {
+        ((need_ms / 1000.0).ceil() as u32).min(12)
+    }
+}
+
 fn ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
@@ -910,6 +957,8 @@ pub struct Engine {
     finished: HashSet<u64>,
     ignored: HashSet<u64>,
     lat: Vec<f64>,
+    /// Recent reducer round trips (ms), words and bids alike.
+    rtts: std::collections::VecDeque<f64>,
     floor: u64,
     phase2: Option<SubscriptionHandle>,
     phase2_next: Option<(u64, SubscriptionHandle)>,
@@ -951,6 +1000,7 @@ impl Engine {
             finished: HashSet::new(),
             ignored: HashSet::new(),
             lat: Vec::new(),
+            rtts: std::collections::VecDeque::new(),
             floor: 0,
             phase2: None,
             phase2_next: None,
@@ -1253,6 +1303,7 @@ impl Engine {
                         mode: &self.opts.mode,
                         slow_ms: self.opts.slow_ms,
                         fast_below_ms: self.opts.fast_below_ms,
+                        dump_bag: dump_bag_for(&self.rtts),
                     };
                     ctx.apply_result(&env, auction_id, &letter, winner, paid);
                 }
@@ -1309,6 +1360,7 @@ impl Engine {
                             mode: &self.opts.mode,
                             slow_ms: self.opts.slow_ms,
                             fast_below_ms: self.opts.fast_below_ms,
+                            dump_bag: dump_bag_for(&self.rtts),
                         };
                         ctx.refresh(&env);
                         ctx.maybe_rebid(&env);
@@ -1321,8 +1373,12 @@ impl Engine {
                 match_id,
                 auction_id,
                 amount,
+                sent,
                 result,
-            } => self.on_bid_done(match_id, auction_id, amount, result),
+            } => {
+                self.note_rtt(ms(sent));
+                self.on_bid_done(match_id, auction_id, amount, result)
+            }
             Ev::JoinDone(r) => match r {
                 Ok(()) => info!("joined the lobby"),
                 Err(e) => info!("join_lobby refused: {e}"),
@@ -1462,6 +1518,7 @@ impl Engine {
             mode: &self.opts.mode,
             slow_ms: self.opts.slow_ms,
             fast_below_ms: self.opts.fast_below_ms,
+            dump_bag: dump_bag_for(&self.rtts),
         };
         let (mut ctx, open) = build_ctx(&env, &self.opts.common, &m, me);
         info!(
@@ -1521,12 +1578,21 @@ impl Engine {
             mode: &self.opts.mode,
             slow_ms: self.opts.slow_ms,
             fast_below_ms: self.opts.fast_below_ms,
+            dump_bag: dump_bag_for(&self.rtts),
         };
         ctx.on_open(&env, &a, bag_total, &mut self.lat);
     }
 
+    fn note_rtt(&mut self, rtt: f64) {
+        self.rtts.push_back(rtt);
+        while self.rtts.len() > 40 {
+            self.rtts.pop_front();
+        }
+    }
+
     fn on_word_done(&mut self, w: WordDone) {
         let rtt = ms(w.sent);
+        self.note_rtt(rtt);
         if let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&w.match_id)) {
             if let Some(i) = ctx.pending.iter().position(|p| p.word == w.word) {
                 ctx.pending.remove(i);
@@ -1540,6 +1606,7 @@ impl Engine {
                 mode: &self.opts.mode,
                 slow_ms: self.opts.slow_ms,
                 fast_below_ms: self.opts.fast_below_ms,
+                dump_bag: dump_bag_for(&self.rtts),
             };
             ctx.refresh(&env);
         }
@@ -1603,12 +1670,14 @@ impl Engine {
             }
             if retry > 0 {
                 let (tx, gen) = (self.tx.clone(), self.gen);
+                let sent = Instant::now();
                 let _ = conn
                     .reducers
                     .submit_bid_then(auction_id, retry, move |_, o| {
                         let _ = tx.send(Msg {
                             gen,
                             ev: Ev::BidDone {
+                                sent,
                                 match_id,
                                 auction_id,
                                 amount: retry,
@@ -1638,6 +1707,7 @@ impl Engine {
             mode: &self.opts.mode,
             slow_ms: self.opts.slow_ms,
             fast_below_ms: self.opts.fast_below_ms,
+            dump_bag: dump_bag_for(&self.rtts),
         };
         ctx.barrier(&env);
         let parts = participants(&conn.db, match_id);
@@ -2204,6 +2274,22 @@ impl RunStats {
             },
             self.matches_finished
         )
+    }
+}
+
+#[cfg(test)]
+mod dump_tests {
+    use super::dump_bag_for;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn dump_zone_tracks_latency() {
+        assert_eq!(dump_bag_for(&VecDeque::new()), 0);
+        assert_eq!(dump_bag_for(&VecDeque::from(vec![90.0; 20])), 0);
+        assert_eq!(dump_bag_for(&VecDeque::from(vec![600.0; 20])), 1);
+        assert_eq!(dump_bag_for(&VecDeque::from(vec![1800.0; 20])), 4);
+        assert_eq!(dump_bag_for(&VecDeque::from(vec![4300.0; 20])), 9);
+        assert_eq!(dump_bag_for(&VecDeque::from(vec![60_000.0; 20])), 12);
     }
 }
 
