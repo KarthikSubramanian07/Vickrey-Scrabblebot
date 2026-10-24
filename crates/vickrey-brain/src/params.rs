@@ -37,6 +37,11 @@ pub struct Params {
     /// Fraction of the remaining auctions' budget to spend (slack < 1 keeps
     /// a reserve, > 1 front-loads).
     pub spend_target: f64,
+    /// Price each future stretch of the match at its own phase when pacing
+    /// (hot opening, cheap close) instead of everything at today's prices.
+    pub phase_aware_pacing: bool,
+    /// Bid this fraction under value during the first quarter (0 = off).
+    pub opening_shade: f64,
     /// Below this marginal value (points) we skip the letter.
     pub min_value: f64,
     /// Bid at least 1 coin on any letter worth this many points (reserve price).
@@ -90,6 +95,8 @@ impl Default for Params {
             lambda_min: 0.05,
             lambda_max: 4.0,
             spend_target: 1.0,
+            phase_aware_pacing: false,
+            opening_shade: 0.0,
             min_value: 0.3,
             cheap_grab_value: 0.8,
             first_price_shade: true,
