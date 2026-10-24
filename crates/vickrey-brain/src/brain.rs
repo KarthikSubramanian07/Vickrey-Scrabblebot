@@ -38,6 +38,9 @@ pub struct BidDecision {
     pub p_win: f64,
 }
 
+/// A run of future auctions: `(count, letter mix)`.
+type Segment = (f64, Vec<(f64, f64, BidDist)>);
+
 pub struct Brain {
     /// Active parameters (switched by table size, see `sync_profile`).
     pub params: Params,
@@ -274,21 +277,53 @@ impl Brain {
     // ------------------------------------------------------------- bidding
 
     fn dist(&self, t: &Tracker, l: Letter) -> BidDist {
+        self.dist_at(t, l, t.progress())
+    }
+
+    fn dist_at(&self, t: &Tracker, l: Letter, progress: f64) -> BidDist {
         self.market.dist(
             l,
-            t.progress(),
+            progress,
             t.n_players().saturating_sub(1),
             t.max_opponent_balance(),
         )
     }
 
-    /// (weight, value, opposing-bid distribution) for every letter that can still come up.
-    fn letter_mix(&self, t: &Tracker) -> Vec<(f64, f64, BidDist)> {
+    /// (weight, value, opposing-bid distribution) for every letter that can
+    /// still come up, priced as of match progress `progress`.
+    fn letter_mix_at(&self, t: &Tracker, progress: f64) -> Vec<(f64, f64, BidDist)> {
         let unseen = t.unseen();
         let total = unseen.len().max(1) as f64;
         (0..ALPHABET)
             .filter(|&l| unseen.0[l] > 0)
-            .map(|l| (unseen.0[l] as f64 / total, self.table[l], self.dist(t, l)))
+            .map(|l| {
+                (
+                    unseen.0[l] as f64 / total,
+                    self.table[l],
+                    self.dist_at(t, l, progress),
+                )
+            })
+            .collect()
+    }
+
+    /// The usable auctions left, as `(count, letter mix)` segments. With
+    /// phase-aware pacing each segment is priced at its own point in the
+    /// match, so the hot opening and the cheap closing are both visible to
+    /// the budget; otherwise everything is priced as of now.
+    fn segments(&self, t: &Tracker) -> Vec<Segment> {
+        let n = Self::usable_now(t);
+        if !self.params.phase_aware_pacing || n <= 1.0 {
+            return vec![(n, self.letter_mix_at(t, t.progress()))];
+        }
+        let total = t.total_auctions.max(1) as f64;
+        let seen = t.auctions_seen as f64;
+        let k = (n as usize).clamp(1, 6);
+        let per = n / k as f64;
+        (0..k)
+            .map(|b| {
+                let mid = seen + per * (b as f64 + 0.5);
+                (per, self.letter_mix_at(t, (mid / total).clamp(0.0, 1.0)))
+            })
             .collect()
     }
 
@@ -300,13 +335,17 @@ impl Brain {
 
     /// λ that makes expected spend over `n` auctions match `budget`, with
     /// every bid capped at `cap` coins.
-    fn solve_lambda(&self, mix: &[(f64, f64, BidDist)], n: f64, cap: f64, budget: f64) -> f64 {
+    fn solve_lambda(&self, segs: &[Segment], cap: f64, budget: f64) -> f64 {
         let p = &self.params;
         let spend = |lam: f64| -> f64 {
-            mix.iter()
-                .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap)))
+            segs.iter()
+                .map(|(n, mix)| {
+                    mix.iter()
+                        .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap)))
+                        .sum::<f64>()
+                        * n
+                })
                 .sum::<f64>()
-                * n
         };
         let (lo, hi) = (p.lambda_min, p.lambda_max);
         if spend(lo) <= budget {
@@ -329,11 +368,15 @@ impl Brain {
     }
 
     /// Expected points bought over `n` auctions at shadow price `lam` with bids capped at `cap`.
-    fn expected_points(mix: &[(f64, f64, BidDist)], n: f64, lam: f64, cap: f64) -> f64 {
-        mix.iter()
-            .map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap)))
-            .sum::<f64>()
-            * n
+    fn expected_points(segs: &[Segment], lam: f64, cap: f64) -> f64 {
+        segs.iter()
+            .map(|(n, mix)| {
+                mix.iter()
+                    .map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap)))
+                    .sum::<f64>()
+                    * n
+            })
+            .sum()
     }
 
     /// Auctions still to come whose letters we can use, including the open one.
@@ -344,13 +387,8 @@ impl Brain {
     /// Solve for λ so expected spend over the usable auctions left matches budget.
     fn pace(&mut self, t: &Tracker) -> f64 {
         let balance = t.my_balance().max(0) as f64;
-        let mix = self.letter_mix(t);
-        self.solve_lambda(
-            &mix,
-            Self::usable_now(t),
-            balance,
-            self.budget_for(t, balance),
-        )
+        let segs = self.segments(t);
+        self.solve_lambda(&segs, balance, self.budget_for(t, balance))
     }
 
     /// Marginal points from one more coin right now (μ). Unlike the pacing
@@ -365,11 +403,10 @@ impl Brain {
         let b0 = t.my_balance().max(0) as f64;
         let delta = (0.25 * b0).max(10.0);
         let b1 = b0 + delta;
-        let mix = self.letter_mix(t);
-        let n = Self::usable_now(t);
-        let l0 = self.solve_lambda(&mix, n, b0, self.budget_for(t, b0));
-        let l1 = self.solve_lambda(&mix, n, b1, self.budget_for(t, b1));
-        let gain = Self::expected_points(&mix, n, l1, b1) - Self::expected_points(&mix, n, l0, b0);
+        let segs = self.segments(t);
+        let l0 = self.solve_lambda(&segs, b0, self.budget_for(t, b0));
+        let l1 = self.solve_lambda(&segs, b1, self.budget_for(t, b1));
+        let gain = Self::expected_points(&segs, l1, b1) - Self::expected_points(&segs, l0, b0);
         (gain / delta).clamp(0.0, 3.0)
     }
 
@@ -418,7 +455,11 @@ impl Brain {
             };
         }
         let d = self.dist(t, letter);
-        let truthful = (value / lambda).min(balance as f64);
+        let mut truthful = (value / lambda).min(balance as f64);
+        // Prices run ~35% hot in the opening quarter; optionally bid under value there.
+        if self.params.opening_shade > 0.0 && t.progress() < 0.25 {
+            truthful *= 1.0 - self.params.opening_shade.min(0.9);
+        }
         let mut amount = match t.kind {
             AuctionKind::Vickrey => truthful.floor() as i64,
             AuctionKind::FirstPrice if self.params.first_price_shade => {
@@ -675,6 +716,49 @@ mod tests {
         );
         let e = index('E').unwrap();
         assert_eq!(free.bid(&t, e).amount, capped2.bid(&t, e).amount);
+    }
+
+    #[test]
+    fn opening_shade_only_applies_early() {
+        let shaded = Params {
+            opening_shade: 0.3,
+            ..Params::default()
+        };
+        let e = index('E').unwrap();
+        // Early: shaded bid is lower.
+        let early = tracker_with("ABLEIT", 66);
+        let (mut a, mut b) = (
+            Brain::new(Params::default(), FieldModel::default(), 9),
+            Brain::new(shaded.clone(), FieldModel::default(), 9),
+        );
+        let (plain, shade) = (a.bid(&early, e).amount, b.bid(&early, e).amount);
+        assert!(shade < plain || plain == 0, "plain {plain} shaded {shade}");
+        // Late (progress > 25%): identical.
+        let mut late = tracker_with("ABLEIT", 20);
+        for _ in 0..40 {
+            late.on_auction_open(e, 20);
+        }
+        let (mut a, mut b) = (
+            Brain::new(Params::default(), FieldModel::default(), 9),
+            Brain::new(shaded, FieldModel::default(), 9),
+        );
+        assert_eq!(a.bid(&late, e).amount, b.bid(&late, e).amount);
+    }
+
+    #[test]
+    fn phase_aware_pacing_gives_a_sane_lambda() {
+        let p = Params {
+            phase_aware_pacing: true,
+            ..Params::default()
+        };
+        let mut b = Brain::new(p.clone(), FieldModel::default(), 2);
+        let t = tracker_with("ABLEIT", 60);
+        let d = b.bid(&t, index('S').unwrap());
+        assert!(
+            d.lambda >= p.lambda_min && d.lambda <= p.lambda_max,
+            "{d:?}"
+        );
+        assert!(d.amount >= 0 && d.amount <= 100);
     }
 
     #[test]
