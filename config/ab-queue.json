@@ -1,14 +1,21 @@
 [
   {
-    "name": "phase-aware pacing (price each stretch at its own phase)",
+    "name": "exact endgame valuation (exact solver when no futures, racks <18)",
     "patch": {
-      "phase_aware_pacing": true
+      "exact_terminal_max": 18
     }
   },
   {
     "name": "opening shade 0.2 (bid 20% under value in the hot first quarter)",
     "patch": {
       "opening_shade": 0.2
+    }
+  },
+  {
+    "name": "denial at full tables (weight 0.2 vs the strongest rival)",
+    "patch": {
+      "deny_max_players": 6,
+      "deny_weight": 0.2
     }
   },
   {
