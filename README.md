@@ -66,7 +66,17 @@ Before writing a line of code we read the server source end to end and mined the
 - **Valuation** samples the letters we can still expect to buy (sized by budget over market price) and measures what a tile adds, using common random numbers so the difference has low variance. A shrinkage prior steadies the cheap all-letters table.
 - **Pacing** is the Balseiro–Gur idea from ad auctions: one shadow price `λ` turns points into coins, chosen so that expected spend matches budget plus expected word income. Under Vickrey the truthful bid `V/λ` is optimal.
 - **Denial**: at heads-up tables the letter's value to the rival is added, since only the difference counts.
-- **Safety rails**: never bid on the last tile, never bid above balance, a deterministic work budget caps every decision (p99 under 260 ms on one core), and the final dump has its own deadline.
+- **Safety rails**: never bid on the last tile, never bid above balance, a deterministic work budget caps every decision (p99 under 260 ms on one core), the final dump has its own deadline, and the dump moves earlier when the server is slow.
+
+## Lessons from the live league
+
+Vickey plays as bot **Vickey** for team **Karthik**. Within its first day in the live league it played 70+ real matches, won a third of them at 6-bot tables (where 1 in 6 is break-even), and climbed into the top ten of 59 bots by rating. The live league taught us three things the simulator couldn't:
+
+| What went wrong live | Evidence | Fix |
+|---|---|---|
+| **Starving with money in the rack.** Vickey went broke mid-match while holding a playable 5–6 letter word, then sat out 20–40 auctions. | m785 held JIVER through 38 dry auctions; m833 held GAUCHO; m816 held PIXELS. | Below 15 coins, with auctions still to come, cash words of 5+ letters, priced with μ (the marginal points a coin buys under the balance cap) rather than the pacing λ, which collapses exactly when you're broke. |
+| **A slow shared server.** SpacetimeDB runs one database's reducers one at a time, and at hackathon peak calls took 1.8–4.3 s, so final dumps sent on the last auction landed after the match ended ("Match not running"). | Four straight last places with every final word rejected. | Track recent round trips and enter a dump zone when the time left is under `2·p90 + 0.3 s`. The bot cashes everything early, and keeps cashing whatever new letters complete. |
+| **The price model was not the problem.** | 2,007 live bids: 401 predicted wins, 359 actual, calibrated in every band from 0.2 to 0.9. | We kept the model and fixed the strategy instead. |
 
 ## Self-improvement
 
@@ -78,7 +88,7 @@ Before writing a line of code we read the server source end to end and mined the
                        vickey-arena tune (paired, 2-batch significance)
 ```
 
-`vickey-arena evolve` refits the rivals' price model from the most recent all-real matches. It then hill-climbs both parameter profiles in the simulator, with the candidate and the incumbent at the same tables on the same seeds, and adopts a change only if it wins clearly on two independent batches. The live bot hot-reloads `config/` at the start of every match. Evolution runs on a launchd timer locally and on a six-hourly GitHub Actions job that opens a PR with any improvement.
+`vickey-arena evolve` refits the rivals' price model from the most recent all-real matches. It then hill-climbs both parameter profiles in the simulator, with the candidate and the incumbent at the same tables on the same seeds, and adopts a change only if it wins clearly on two independent batches. The live bot hot-reloads `config/` at the start of every match. Evolution runs on a launchd timer locally and on a six-hourly GitHub Actions job that opens a PR with any improvement. The local timer stands down on battery and whenever a tournament is open or under way, so tuning never competes with live bids for the CPU. Heads-up tables (the three-game final) get their own profile, `config/params_duel.json`, tuned separately.
 
 ## Repo layout
 
@@ -95,17 +105,20 @@ Before writing a line of code we read the server source end to end and mined the
 
 ```sh
 # 1. One-time: create the team and mint a bot credential.
-#    Uses your `spacetime login`; no browser needed.
-cargo run --release -p vickey-bot -- setup --team Vickey --bot Vickey
+#    Uses your `spacetime login`; no browser needed. (Ours: team Karthik, bot Vickey.)
+cargo run --release -p vickey-bot -- setup --team Karthik --bot Vickey
 
 # 2. Play forever: joins lobbies, registers for tournaments, logs everything.
 cargo run --release -p vickey-bot -- run
 
-# 3. Keep it alive across reboots (macOS)
+# 3. Keep it alive across reboots and crashes (macOS), awake via caffeinate
 ops/install-launchd.sh
+ops/install-evolve.sh          # self-improvement every 3 h (skips on battery / during tournaments)
 
 # What's going on?
 cargo run --release -p vickey-bot -- status
+tail -f runs/vickey.out.log    # every bid, play and dump, explained
+cat runs/heartbeat             # liveness, current match, reconnects
 ```
 
 ## Simulate and tune

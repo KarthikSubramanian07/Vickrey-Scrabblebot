@@ -469,14 +469,24 @@ impl Brain {
         if t.is_last_auction() {
             return self.final_plays(&t.my_rack);
         }
-        if self
-            .dict
-            .candidates(&t.my_rack, self.params.min_play_len)
-            .is_empty()
-        {
+        // In the closing stretch letters are cheap and coins from the final
+        // dump arrive too late to spend, so shorter words may be cashed early.
+        let late = self.params.late_window > 0 && t.bag_left <= self.params.late_window;
+        // Broke with auctions still to come: every auction we sit out is a
+        // letter a rival gets cheaply. Live matches showed 20–40-auction
+        // droughts while a playable 5–6 letter word sat in the rack.
+        let starved = t.my_balance() < self.params.starve_coins && Self::usable_future(t) >= 3;
+        let mut min_len = self.params.min_play_len;
+        if late {
+            min_len = min_len.min(self.params.late_min_play_len);
+        }
+        if starved {
+            min_len = min_len.min(self.params.starve_min_play_len);
+        }
+        if self.dict.candidates(&t.my_rack, min_len).is_empty() {
             return Vec::new();
         }
-        let mu = if self.params.mu_liquidity {
+        let mu = if self.params.mu_liquidity || late || starved {
             self.money_value(t)
         } else {
             self.last_lambda
@@ -502,7 +512,7 @@ impl Brain {
                 / futures.len() as f64
         };
         for _ in 0..3 {
-            let mut cands: Vec<u32> = self.dict.candidates(&rack, p.min_play_len);
+            let mut cands: Vec<u32> = self.dict.candidates(&rack, min_len);
             if cands.is_empty() {
                 break;
             }
@@ -615,6 +625,18 @@ mod tests {
         let rich = b.money_value(&t);
         assert!(broke > rich, "broke {broke} rich {rich}");
         assert!(broke > 0.05);
+    }
+
+    #[test]
+    fn cashes_short_word_when_starved() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 9);
+        // JIVER (5 letters, 30 points) with 38 auctions left and 7 coins.
+        let mut t = tracker_with("EIJRV", 38);
+        t.on_participant(1, 7, 48);
+        assert_eq!(b.plays(&t), vec!["JIVER"]);
+        // Rich: keep building towards a 7-letter word.
+        t.on_participant(1, 90, 48);
+        assert!(b.plays(&t).is_empty());
     }
 
     #[test]

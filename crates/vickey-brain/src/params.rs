@@ -57,6 +57,14 @@ pub struct Params {
     /// cap) instead of the pacing λ. Off by default: neutral-to-slightly
     /// worse in simulation; the tuner may switch it on.
     pub mu_liquidity: bool,
+    /// With this many tiles (or fewer) left in the bag, cash words as short
+    /// as `late_min_play_len`, pricing coins with μ. 0 disables.
+    pub late_window: u32,
+    pub late_min_play_len: usize,
+    /// Below this balance (with 3+ usable auctions left) we are "starved":
+    /// cash words as short as `starve_min_play_len`, pricing coins with μ.
+    pub starve_coins: i64,
+    pub starve_min_play_len: usize,
     /// A mid-match play must beat holding by this many points.
     pub play_margin: f64,
     /// How many top words to consider per play decision.
@@ -88,6 +96,10 @@ impl Default for Params {
             min_play_len: 6,
             liquidity: 0.6,
             mu_liquidity: false,
+            late_window: 0,
+            starve_coins: 15,
+            starve_min_play_len: 5,
+            late_min_play_len: 4,
             play_margin: 0.5,
             play_candidates: 10,
             final_solve_ms: 180,

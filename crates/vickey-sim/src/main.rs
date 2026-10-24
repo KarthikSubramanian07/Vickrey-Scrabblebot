@@ -114,6 +114,39 @@ enum Cmd {
     },
 }
 
+/// Self-improvement is CPU-heavy. Never run it while a tournament is open or
+/// under way (it would compete with the live bot for the CPU and for
+/// bid latency), or on battery (it would drain the machine the bot needs).
+fn evolve_blocked() -> Option<String> {
+    if let Ok(out) = std::process::Command::new("pmset")
+        .args(["-g", "batt"])
+        .output()
+    {
+        if String::from_utf8_lossy(&out.stdout).contains("Battery Power") {
+            return Some("running on battery".into());
+        }
+    }
+    // Tournament status sum tags: 1 Swiss, 2 Bracket, 3 Final, 5 Registration.
+    match vickey_sim::live::sql(
+        vickey_sim::live::DEFAULT_HOST,
+        vickey_sim::live::DEFAULT_DB,
+        "SELECT id, status FROM tournament",
+    ) {
+        Ok(rows) => rows
+            .iter()
+            .find(|r| {
+                matches!(
+                    r.get(1)
+                        .and_then(|s| s.get(0))
+                        .and_then(serde_json::Value::as_u64),
+                    Some(1 | 2 | 3 | 5)
+                )
+            })
+            .map(|r| format!("tournament {} is open or under way", r[0])),
+        Err(e) => Some(format!("could not check tournaments: {e}")),
+    }
+}
+
 fn write_field(path: &std::path::Path, model: &FieldModel) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -311,6 +344,10 @@ fn main() -> Result<()> {
             profiles,
         } => {
             use std::io::Write;
+            if let Some(why) = evolve_blocked() {
+                eprintln!("evolve skipped: {why}");
+                return Ok(());
+            }
             let started = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs();
