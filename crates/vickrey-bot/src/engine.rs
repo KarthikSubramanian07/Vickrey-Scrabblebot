@@ -390,6 +390,8 @@ struct AuctionRec {
     words: Vec<String>,
     fast: bool,
     rebid: bool,
+    /// The instant bid sent as the auction opened, before any valuation.
+    anchor: Option<i64>,
 }
 
 struct MatchCtx {
@@ -583,6 +585,7 @@ impl MatchCtx {
                 ms_left: rec.ms_left,
                 fast: rec.fast,
                 rebid: rec.rebid,
+                anchor: rec.anchor,
                 words: rec.words,
                 winner,
                 we_won,
@@ -794,6 +797,45 @@ impl MatchCtx {
             self.recs.insert(a.id, rec);
             return;
         }
+        // Anchor bid first. Live, during server slowdowns every bid we sent
+        // ~150 ms after the open came back "Auction closed" while rivals who
+        // bid within milliseconds kept winning (m12305-12338: 8-24 ghost
+        // losses each). Send a cheap table-based bid now; the full decision
+        // below replaces it whenever it still lands in time.
+        let mut anchor = 0i64;
+        if bag_total != 0 && env.mode.is_live() {
+            anchor = self
+                .brain
+                .anchor_bid(&self.tracker, l)
+                .min(self.tracker.my_balance())
+                .max(0);
+            if anchor > 0 {
+                let tx = env.tx.clone();
+                let sent = Instant::now();
+                let (gen, match_id, auction_id) = (env.gen, self.match_id, a.id);
+                match env
+                    .conn
+                    .reducers
+                    .submit_bid_then(a.id, anchor, move |_, o| {
+                        let _ = tx.send(Msg {
+                            gen,
+                            ev: Ev::BidDone {
+                                sent,
+                                match_id,
+                                auction_id,
+                                amount: anchor,
+                                result: flatten_outcome(o),
+                            },
+                        });
+                    }) {
+                    Ok(()) => {
+                        rec.submitted = true;
+                        rec.anchor = Some(anchor);
+                    }
+                    Err(e) => rec.bid_error = Some(format!("anchor send failed: {e}")),
+                }
+            }
+        }
         // Inside the dump zone the end of the match is closer than a slow
         // server can be trusted to answer: cash in everything now, and keep
         // cashing whatever the next letters complete.
@@ -886,25 +928,25 @@ impl MatchCtx {
                 lambda: d.lambda,
                 p_win: d.p_win,
             });
-            if amount > 0 && env.mode.is_live() && !stale {
+            // A sealed bid cannot be withdrawn: if the anchor went out and
+            // the full decision is 0, lower it to a token 1 instead.
+            let send = if anchor > 0 { amount.max(1) } else { amount };
+            if send > 0 && send != anchor && env.mode.is_live() && !stale {
                 let tx = env.tx.clone();
                 let sent = Instant::now();
                 let (gen, match_id, auction_id) = (env.gen, self.match_id, a.id);
-                match env
-                    .conn
-                    .reducers
-                    .submit_bid_then(a.id, amount, move |_, o| {
-                        let _ = tx.send(Msg {
-                            gen,
-                            ev: Ev::BidDone {
-                                sent,
-                                match_id,
-                                auction_id,
-                                amount,
-                                result: flatten_outcome(o),
-                            },
-                        });
-                    }) {
+                match env.conn.reducers.submit_bid_then(a.id, send, move |_, o| {
+                    let _ = tx.send(Msg {
+                        gen,
+                        ev: Ev::BidDone {
+                            sent,
+                            match_id,
+                            auction_id,
+                            amount: send,
+                            result: flatten_outcome(o),
+                        },
+                    });
+                }) {
                     Ok(()) => rec.submitted = true,
                     Err(e) => rec.bid_error = Some(format!("send failed: {e}")),
                 }
