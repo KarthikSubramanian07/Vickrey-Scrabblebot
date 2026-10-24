@@ -4,3 +4,7 @@ target/
 .secrets/
 runs/
 /tmp/
+# Runtime A/B state the bot writes as experiments start, end and promote
+config/ab.json
+config/params_b.json
+config/params.prev.json

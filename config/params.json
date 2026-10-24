@@ -7,7 +7,7 @@
   "win_share_scale": 0.7897246762970955,
   "choice_mult": 1.6,
   "max_future": 19,
-  "income_factor": 0.8,
+  "income_factor": 0.4,
   "lambda_min": 0.08131508659025938,
   "lambda_max": 4.0,
   "spend_target": 1.0,
