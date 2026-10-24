@@ -51,6 +51,10 @@ pub struct Params {
     pub cheap_grab_value: f64,
     /// First-price: grid search the bid that maximises surplus.
     pub first_price_shade: bool,
+    /// Bid at least this share of the market median on ordinary letters
+    /// worth `volume_min_value`+ points to us (0 = off).
+    pub volume_floor: f64,
+    pub volume_min_value: f64,
     /// Cap bids on J/K/Q/X/Z at this multiple of the market median (0 = off).
     pub premium_cap_mult: f64,
     /// Weight on denying the strongest rival (relative-score games).
@@ -104,6 +108,8 @@ impl Default for Params {
             min_value: 0.3,
             cheap_grab_value: 0.8,
             first_price_shade: true,
+            volume_floor: 0.0,
+            volume_min_value: 2.0,
             premium_cap_mult: 0.0,
             deny_weight: 0.5,
             deny_max_players: 2,

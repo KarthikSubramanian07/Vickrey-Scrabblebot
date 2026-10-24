@@ -495,6 +495,18 @@ impl Brain {
         if amount < 1 && value >= self.params.cheap_grab_value {
             amount = 1;
         }
+        // Volume floor: on ordinary letters that fit, bid at least a share of
+        // the market price, so we collect the letters nobody else is
+        // fighting over (Vickrey: we pay the rivals' bid, not ours). The live
+        // leader wins 4.5 opening letters at 11.7 this way; we paid 15.6.
+        if self.params.volume_floor > 0.0
+            && VALUE[letter] < 5
+            && value >= self.params.volume_min_value
+            && !t.is_last_auction()
+        {
+            let floor = (self.params.volume_floor * d.median).floor() as i64;
+            amount = amount.max(floor);
+        }
         // Premium letters (J, K, Q, X, Z) need specific words to pay off; the
         // live league's best bot refuses to pay much over market for them.
         if self.params.premium_cap_mult > 0.0 && VALUE[letter] >= 5 {
@@ -806,6 +818,29 @@ mod tests {
             strictly_better += (e > g) as u32;
         }
         assert!(strictly_better > 0);
+    }
+
+    #[test]
+    fn volume_floor_lifts_low_bids_on_fitting_common_letters() {
+        let t = tracker_with("ABLEIT", 40);
+        let s = index('S').unwrap();
+        let mut plain = Brain::new(Params::default(), FieldModel::default(), 6);
+        let mut floored = Brain::new(
+            Params {
+                volume_floor: 0.9,
+                volume_min_value: 0.0,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            6,
+        );
+        let (p, f) = (plain.bid(&t, s), floored.bid(&t, s));
+        let median = floored.market.dist(s, t.progress(), 5, 100).median;
+        assert!(
+            f.amount >= (0.9 * median).floor() as i64,
+            "{f:?} median {median}"
+        );
+        assert!(f.amount >= p.amount);
     }
 
     #[test]
