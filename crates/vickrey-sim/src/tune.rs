@@ -134,10 +134,13 @@ fn sample(
                 let c = order.iter().position(|x| *x == "vickrey@cand").unwrap();
                 (r.seats[c].score - r.seats[1 - c].score) as f64
             };
+            // VICKREY_DUEL_RIVAL names the third party (default shark; use
+            // `nijello` to tune for the likely final).
+            let rival = std::env::var("VICKREY_DUEL_RIVAL").unwrap_or_else(|_| "shark".into());
             let vs_shark = |who: &str, seed: u64| {
                 let mut agents: Vec<Box<dyn Agent>> = vec![
                     seat(who, cand, inc, field, seed ^ 3),
-                    make_agent("shark", inc, field, seed ^ 5),
+                    make_agent(&rival, inc, field, seed ^ 5),
                 ];
                 let r = play_match(&mut agents, cfg, seed);
                 (r.seats[0].score - r.seats[1].score) as f64

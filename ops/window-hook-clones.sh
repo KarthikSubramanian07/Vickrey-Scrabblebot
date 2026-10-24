@@ -30,6 +30,10 @@ for i,it in enumerate(q):
 PY
   echo "== tune multi on the clone field (24 iters x 48)"
   nice -n 19 $A tune --profile multi --iters 24 --matches 48 --out runs/tune/multi-clone2.json --history runs/tune/tune-clone2.jsonl --seed 5 2>&1 | tail -30
+  echo "== tune duel vs the Nijello clone (16 iters x 32)"
+  VICKREY_DUEL_RIVAL=nijello nice -n 19 $A --params config/params_duel.json tune --profile duel --iters 16 --matches 32 --out runs/tune/duel-nijello.json --history runs/tune/tune-duel-nijello.jsonl --seed 9 2>&1 | tail -20
+  echo "== duel: tuned vs current duel params, fresh seed"
+  VICKREY_DUEL_RIVAL=nijello nice -n 19 $A --params runs/tune/duel-nijello.json --params-b config/params_duel.json compare --profile duel -n 96 --seed 78
   echo "== tuned vs champion, fresh seed"
   nice -n 19 $A --params runs/tune/multi-clone2.json --params-b config/params.json compare --profile multi -n 128 --seed 77
   echo "== done"
