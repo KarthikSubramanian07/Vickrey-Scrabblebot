@@ -641,9 +641,10 @@ impl Agent for SookraClone {
     }
 }
 
-/// Gaucho (JoaquinGiorgis/scrabblebot-gaucho, `params/vickrey.json`). Bid =
-/// `1.156·Δpotential + 1.572·face + 3.394 + 0.914·balance/auctionsLeft`.
-/// Never plays a word paying under 38 unless nearly broke; otherwise plays
+/// Gaucho (JoaquinGiorgis/scrabblebot-gaucho, `params/vickrey.json`, champion
+/// of 22:02 UTC). Bid = `0.937·Δpotential + 1.93·face + 3.128 +
+/// 1.224·balance/auctionsLeft`.
+/// Never plays a word paying under 40 unless nearly broke; otherwise plays
 /// when `reward + potential(rest) ≥ 0.934·potential(rack)`; flushes the rack
 /// as the last playable auction opens.
 pub struct GauchoClone {
@@ -672,10 +673,10 @@ impl Agent for GauchoClone {
         let rack = t.my_rack;
         let dv = potential(d, &rack.with(letter)) - potential(d, &rack);
         let auctions_left = (t.bag_left + 1) as f64;
-        let bid = 1.156 * dv
-            + 1.572 * VALUE[letter] as f64
-            + 3.394
-            + 0.914 * balance as f64 / auctions_left;
+        let bid = 0.937 * dv
+            + 1.93 * VALUE[letter] as f64
+            + 3.128
+            + 1.224 * balance as f64 / auctions_left;
         (bid.floor() as i64).clamp(0, balance)
     }
 
@@ -689,7 +690,7 @@ impl Agent for GauchoClone {
         let mut out = Vec::new();
         let base = potential(d, &r);
         while let Some(s) = d.best_word(&r, 1) {
-            if (s.reward as f64) < 38.0 && balance >= 9.9 {
+            if (s.reward as f64) < 40.0 && balance >= 9.9 {
                 break;
             }
             let mut rest = r;
