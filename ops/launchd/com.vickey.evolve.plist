@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Self-improvement timer: every 3 hours refit the rivals' price model from the
+  live league and tune both strategy profiles. The running bot hot-reloads
+  config/ at its next match. Installed by ops/install-evolve.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vickey.evolve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/target/release/vickey-arena</string>
+    <string>evolve</string>
+    <string>--iters</string>
+    <string>10</string>
+    <string>--matches</string>
+    <string>32</string>
+    <string>--profiles</string>
+    <string>__PROFILES__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+  <key>StartInterval</key>
+  <integer>10800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <!-- Tuning is background work; never starve the live bot's bids. -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Nice</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>__REPO__/runs/evolve.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/runs/evolve.err.log</string>
+</dict>
+</plist>

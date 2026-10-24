@@ -1,0 +1,7 @@
+# BuildKit picks this up for ops/Dockerfile (keeps the build context small).
+target/
+runs/
+.git/
+**/*.token
+.env
+.secrets/
