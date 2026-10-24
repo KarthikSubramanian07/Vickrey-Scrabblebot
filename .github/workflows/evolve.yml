@@ -14,15 +14,13 @@ permissions:
 
 jobs:
   evolve:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, vickrey]
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p vickrey-sim --bin vickrey-arena
       - name: Refit + tune
-        run: ./target/release/vickrey-arena evolve --iters 10 --matches 24
+        run: RAYON_NUM_THREADS=4 nice -n 12 ./target/release/vickrey-arena evolve --iters 10 --matches 24
       - name: Open a PR with any improvement
         env:
           GH_TOKEN: ${{ github.token }}
