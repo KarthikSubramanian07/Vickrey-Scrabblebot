@@ -39,6 +39,9 @@ enum Cmd {
         n: u32,
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        /// Fail (exit 1) if the `vickey` seat's mean place is worse than this.
+        #[arg(long)]
+        max_place: Option<f64>,
     },
     /// Play one match with a decision trace for the first `vickey` seat.
     Trace {
@@ -156,12 +159,29 @@ fn main() -> Result<()> {
     };
     let by_label = move |label: &str| if label == "b" { b.clone() } else { a.clone() };
     match cli.cmd {
-        Cmd::Bench { lineup, n, seed } => {
+        Cmd::Bench {
+            lineup,
+            n,
+            seed,
+            max_place,
+        } => {
             let lineup: Vec<String> = lineup.split(',').map(|s| s.trim().to_string()).collect();
             let t = Instant::now();
             let stats = run_lineup(&lineup, &by_label, &field, &cfg, n, seed);
             print_stats(&stats);
             eprintln!("{n} matches in {:.1}s", t.elapsed().as_secs_f64());
+            if let (Some(limit), Some(v)) = (max_place, stats.get("vickey")) {
+                if v.mean_place() > limit {
+                    anyhow::bail!(
+                        "regression: vickey mean place {:.2} > {limit}",
+                        v.mean_place()
+                    );
+                }
+                eprintln!(
+                    "gate ok: vickey mean place {:.2} <= {limit}",
+                    v.mean_place()
+                );
+            }
         }
         Cmd::Trace { lineup, seed } => {
             let specs: Vec<String> = lineup.split(',').map(|s| s.trim().to_string()).collect();

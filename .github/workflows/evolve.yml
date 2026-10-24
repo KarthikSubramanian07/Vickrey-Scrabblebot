@@ -1,0 +1,40 @@
+name: Evolve
+
+# Self-improvement in the cloud: refit the rivals' price model from the live
+# league's public history, tune both strategy profiles against it, and open
+# a PR when anything improved. The local launchd job does the same more often.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p vickey-sim --bin vickey-arena
+      - name: Refit + tune
+        run: ./target/release/vickey-arena evolve --iters 10 --matches 24
+      - name: Open a PR with any improvement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- config/; then echo "no change"; exit 0; fi
+          branch="evolve/$(date -u +%Y%m%d-%H%M)"
+          git config user.name "Karthik Subramanian"
+          git config user.email "winnerkarthik07@gmail.com"
+          git checkout -b "$branch"
+          git add config/
+          git commit -m "Evolve: refit field model and tuned params from live data"
+          git push origin "$branch"
+          gh pr create --title "Evolve: tuned params $(date -u +%F)" \
+            --body "Automated refit of config/field.json from live public history and paired-comparison tuning of config/params*.json. Only statistically significant improvements are written." \
+            --base main --head "$branch"

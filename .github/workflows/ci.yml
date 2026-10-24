@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt · clippy · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --release
+
+  regression:
+    name: strategy regression gate
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p vickey-sim --bin vickey-arena
+      - name: Six-seat table vs the calibrated field
+        run: ./target/release/vickey-arena bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0
+      - name: First-price table
+        run: ./target/release/vickey-arena --first-price bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 24 --seed 9 --max-place 2.0
+      - name: Server sims (lobby padding)
+        run: ./target/release/vickey-arena bench --lineup vickey,brutus,brutus,valor,cheapo,starter -n 24 --seed 5 --max-place 1.3
