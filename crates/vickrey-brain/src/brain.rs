@@ -60,6 +60,9 @@ pub struct Brain {
     last_bid: i64,
     /// Wall-clock cut-off for the current decision's sampling, if any.
     deadline: Option<std::time::Instant>,
+    /// Per-letter expected extra coins from words we would cash mid-match,
+    /// filled by `marginal_values_capped` when `cash_weight` is on.
+    last_cash: Vec<f64>,
 }
 
 impl Brain {
@@ -79,6 +82,7 @@ impl Brain {
             last_lambda: 0.3,
             last_bid: 0,
             deadline: None,
+            last_cash: Vec::new(),
         }
     }
 
@@ -230,14 +234,30 @@ impl Brain {
         };
         let mut base = 0.0;
         let mut with = vec![0.0; letters.len()];
+        // Coins channel: the best word we would cash mid-match (length >=
+        // min_play_len) with and without the letter. Income is spendable,
+        // so it enters the bid in coins (theory.md, section 1).
+        let want_cash = self.params.cash_weight > 0.0;
+        let min_len = self.params.min_play_len;
+        let dict = self.dict;
+        let cashable = |r: &Rack| dict.best_word(r, min_len).map_or(0.0, |s| s.reward as f64);
+        let mut cash_base = 0.0;
+        let mut cash_with = vec![0.0; letters.len()];
         let mut used = 0u64;
         let mut n = 0usize;
         for f in &futures {
             let mut r = *rack;
             r.plus(f);
             base += eval(self, &r);
+            if want_cash {
+                cash_base += cashable(&r);
+            }
             for (j, &l) in letters.iter().enumerate() {
-                with[j] += eval(self, &r.with(l));
+                let rl = r.with(l);
+                with[j] += eval(self, &rl);
+                if want_cash {
+                    cash_with[j] += cashable(&rl);
+                }
             }
             n += 1;
             let len = r.len() as u64 + 1;
@@ -252,6 +272,14 @@ impl Brain {
             }
         }
         let n = n.max(1) as f64;
+        self.last_cash = if want_cash {
+            cash_with
+                .iter()
+                .map(|c| ((c - cash_base) / n).max(0.0))
+                .collect()
+        } else {
+            vec![0.0; letters.len()]
+        };
         (
             base / n,
             with.into_iter()
@@ -461,6 +489,15 @@ impl Brain {
             self.params.work_budget,
         );
         let mut value = v[0];
+        // Spendable share of any coins this letter would bring in: coins
+        // that land with few auctions left cannot be redeployed.
+        let cash_bonus = if self.params.cash_weight > 0.0 {
+            let spendable =
+                (Self::usable_future(t) as f64 / self.params.cash_horizon.max(1.0)).clamp(0.0, 1.0);
+            self.params.cash_weight * self.last_cash.first().copied().unwrap_or(0.0) * spendable
+        } else {
+            0.0
+        };
         self.table[letter] = value;
         if self.params.deny_weight > 0.0 && t.n_players() <= self.params.deny_max_players {
             value += self.params.deny_weight * self.rival_value(t, letter);
@@ -484,7 +521,7 @@ impl Brain {
             };
         }
         let d = self.dist(t, letter);
-        let mut truthful = (value / lambda).min(balance as f64);
+        let mut truthful = (value / lambda + cash_bonus).min(balance as f64);
         // Completion premium: 64% of the valuable auctions we lost live fed
         // a rival's 7+ word, with a median shortfall of 5 coins. When this
         // letter turns the rack into a 7+ word right now, bid over value;
@@ -973,6 +1010,37 @@ mod tests {
         let mut free = Brain::new(Params::default(), FieldModel::default(), 4);
         let mut capped = Brain::new(p, FieldModel::default(), 4);
         assert_eq!(free.bid(&late, z).amount, capped.bid(&late, z).amount);
+    }
+
+    #[test]
+    fn cash_value_raises_bids_on_letters_that_cash_a_word_midmatch() {
+        let base = Params {
+            lambda_min: 1.0,
+            lambda_max: 1.0,
+            min_play_len: 7,
+            ..Params::default()
+        };
+        let cash = Params {
+            cash_weight: 1.0,
+            cash_horizon: 12.0,
+            ..base.clone()
+        };
+        let e = index('E').unwrap();
+        // Mid-match, CAZIQU + E cashes CAZIQUE (81 coins we can spend again).
+        let t = tracker_with("CAZIQU", 30);
+        let mut a = Brain::new(base.clone(), FieldModel::default(), 3);
+        let mut b = Brain::new(cash.clone(), FieldModel::default(), 3);
+        let (pa, pb) = (a.bid(&t, e).amount, b.bid(&t, e).amount);
+        assert!(pb > pa, "plain {pa} with cash {pb}");
+        // With one usable auction left the coins can't be spent: no bonus.
+        let t2 = tracker_with("CAZIQU", 2);
+        let mut a2 = Brain::new(base, FieldModel::default(), 3);
+        let mut b2 = Brain::new(cash, FieldModel::default(), 3);
+        let (qa, qb) = (a2.bid(&t2, e).amount, b2.bid(&t2, e).amount);
+        assert!(
+            qb - qa <= (81.0 / 12.0f64).ceil() as i64,
+            "late bonus too large: {qa} vs {qb}"
+        );
     }
 
     #[test]

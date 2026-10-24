@@ -22,6 +22,12 @@
   </array>
   <key>WorkingDirectory</key>
   <string>__REPO__</string>
+  <!-- Three worker threads: the live bot's 1-second bids come first. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RAYON_NUM_THREADS</key>
+    <string>3</string>
+  </dict>
   <key>StartInterval</key>
   <integer>10800</integer>
   <key>RunAtLoad</key>

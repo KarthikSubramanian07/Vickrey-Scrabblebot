@@ -59,6 +59,11 @@ pub struct Params {
     /// worth at least `endgame_allin_min_value` points (0 = off).
     pub endgame_allin_auctions: u32,
     pub endgame_allin_min_value: f64,
+    /// Weight on the coins a letter brings in by letting us cash a word
+    /// mid-match; income is spendable, so it enters the bid in coins (0 = off).
+    pub cash_weight: f64,
+    /// Auctions over which fresh coins count as fully spendable.
+    pub cash_horizon: f64,
     /// Cap bids on J/K/Q/X/Z at this multiple of the market median (0 = off).
     pub premium_cap_mult: f64,
     /// Apply the premium cap only while match progress is below this (1.0 = always).
@@ -126,6 +131,8 @@ impl Default for Params {
             volume_min_value: 2.0,
             endgame_allin_auctions: 0,
             endgame_allin_min_value: 3.0,
+            cash_weight: 0.0,
+            cash_horizon: 12.0,
             premium_cap_mult: 0.0,
             premium_cap_until: 1.0,
             completion_premium: 0.0,
