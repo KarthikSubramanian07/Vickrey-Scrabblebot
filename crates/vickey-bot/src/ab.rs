@@ -159,6 +159,55 @@ pub fn maybe_decide(config_dir: &Path, runs_dir: &Path, ab: &AbConfig) -> Option
     None
 }
 
+/// Start the next queued experiment if none is running. `ab-queue.json` is
+/// a list of `{"name": "...", "patch": {param: value, ...}}`; the patch is
+/// applied to the current champion, so every challenger is one change away
+/// from whatever is winning now.
+pub fn advance_queue(config_dir: &Path) -> Option<String> {
+    if config_dir.join("ab.json").exists() {
+        return None;
+    }
+    let qpath = config_dir.join("ab-queue.json");
+    let mut queue: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(&qpath).ok()?).ok()?;
+    if queue.is_empty() {
+        return None;
+    }
+    let next = queue.remove(0);
+    let name = next
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("queued")
+        .to_string();
+    let champ: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(config_dir.join("params.json")).ok()?)
+            .ok()?;
+    let mut challenger = champ;
+    if let (Some(obj), Some(patch)) = (
+        challenger.as_object_mut(),
+        next.get("patch").and_then(|p| p.as_object()),
+    ) {
+        for (k, v) in patch {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    // Validate before committing to it.
+    let text = serde_json::to_string_pretty(&challenger).ok()? + "\n";
+    serde_json::from_str::<vickey_brain::Params>(&text).ok()?;
+    std::fs::write(config_dir.join("params_b.json"), text).ok()?;
+    let ab = serde_json::json!({"challenger": "params_b.json", "share": next.get("share").and_then(|v| v.as_f64()).unwrap_or(0.5), "name": name});
+    std::fs::write(
+        config_dir.join("ab.json"),
+        serde_json::to_string_pretty(&ab).ok()? + "\n",
+    )
+    .ok()?;
+    std::fs::write(&qpath, serde_json::to_string_pretty(&queue).ok()? + "\n").ok()?;
+    Some(format!(
+        "A/B: started '{name}' ({} more queued)",
+        queue.len()
+    ))
+}
+
 /// `vickey ab-report`.
 pub fn report(config_dir: &Path, runs_dir: &Path) {
     let Some(ab) = crate::config::load_ab(config_dir) else {
@@ -203,6 +252,28 @@ mod tests {
             })
             .collect();
         std::fs::write(dir.join("summary.jsonl"), body).unwrap();
+    }
+
+    #[test]
+    fn queue_starts_the_next_experiment_on_the_new_champion() {
+        let dir = std::env::temp_dir().join(format!("vickey-abq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("params.json"), "{\"min_play_len\": 6}").unwrap();
+        std::fs::write(
+            dir.join("ab-queue.json"),
+            "[{\"name\": \"cap\", \"patch\": {\"premium_cap_mult\": 1.0}}, {\"name\": \"two\", \"patch\": {}}]",
+        )
+        .unwrap();
+        let msg = advance_queue(&dir).unwrap();
+        assert!(msg.contains("'cap'") && msg.contains("1 more"), "{msg}");
+        let b: vickey_brain::Params =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("params_b.json")).unwrap())
+                .unwrap();
+        assert_eq!((b.min_play_len, b.premium_cap_mult), (6, 1.0));
+        // A test is running: nothing new starts.
+        assert!(advance_queue(&dir).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
