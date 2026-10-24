@@ -1,5 +1,27 @@
 [
-  { "name": "premium cap 1.0x market", "patch": { "premium_cap_mult": 1.0 } },
-  { "name": "cash 5-letter words when starved below 30", "patch": { "starve_coins": 30, "starve_min_play_len": 5 } },
-  { "name": "late window: cash 4+ letter words in the last 12 auctions", "patch": { "late_window": 12, "late_min_play_len": 4 } }
+  {
+    "name": "phase-aware pacing (price each stretch at its own phase)",
+    "patch": {
+      "phase_aware_pacing": true
+    }
+  },
+  {
+    "name": "opening shade 0.2 (bid 20% under value in the hot first quarter)",
+    "patch": {
+      "opening_shade": 0.2
+    }
+  },
+  {
+    "name": "premium cap 1.0x market",
+    "patch": {
+      "premium_cap_mult": 1.0
+    }
+  },
+  {
+    "name": "cash 5-letter words when starved below 30",
+    "patch": {
+      "starve_coins": 30,
+      "starve_min_play_len": 5
+    }
+  }
 ]
