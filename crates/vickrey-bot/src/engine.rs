@@ -771,6 +771,29 @@ impl MatchCtx {
             ..Default::default()
         };
         let mut amount = 0;
+        // Already closed when we got here (reconnect backlog, catch-up after
+        // a stall): a valuation now cannot be submitted and only delays the
+        // next live auction. Track it and move on.
+        if stale {
+            rec.decision_ms = ms(started);
+            rec.ms_left = Some(a.closes_at.to_micros_since_unix_epoch() / 1000 - now_ms());
+            info!(
+                "m{} #{} '{}' bag {} already closed when seen ({} ms late): skipped",
+                self.match_id,
+                seq,
+                a.letter,
+                bag_total,
+                -rec.ms_left.unwrap_or(0)
+            );
+            self.open = Some(OpenInfo {
+                auction_id: a.id,
+                letter: l,
+                closes_at_ms: a.closes_at.to_micros_since_unix_epoch() / 1000,
+                retried: false,
+            });
+            self.recs.insert(a.id, rec);
+            return;
+        }
         // Inside the dump zone the end of the match is closer than a slow
         // server can be trusted to answer: cash in everything now, and keep
         // cashing whatever the next letters complete.

@@ -552,7 +552,9 @@ impl Agent for NijelloClone {
         let endgame = t.bag_left <= 6;
         loop {
             let min_len = if endgame && balance >= 10.5 { 7 } else { 1 };
-            let Some(s) = d.best_word(&r, min_len) else { break };
+            let Some(s) = d.best_word(&r, min_len) else {
+                break;
+            };
             let mut rest = r;
             rest.sub(&s.rack);
             let dq = potential(d, &r) - potential(d, &rest);
@@ -626,7 +628,9 @@ impl Agent for SookraClone {
         }
         if t.my_balance() < 15 {
             let d = dictionary();
-            let w = d.best_word(&t.my_rack, 5).or_else(|| d.best_word(&t.my_rack, 1));
+            let w = d
+                .best_word(&t.my_rack, 5)
+                .or_else(|| d.best_word(&t.my_rack, 1));
             return w.map(|s| vec![s.word.to_string()]).unwrap_or_default();
         }
         Vec::new()
