@@ -92,7 +92,7 @@ fn sample(
             let mut agents: Vec<Box<dyn Agent>> = specs
                 .iter()
                 .enumerate()
-                .map(|(i, sp)| seat(sp, cand, inc, field, s ^ (i as u64 + 1) * 0x51))
+                .map(|(i, sp)| seat(sp, cand, inc, field, s ^ ((i as u64 + 1) * 0x51)))
                 .collect();
             let r = play_match(&mut agents, cfg, s);
             let ic = specs.iter().position(|x| x == "vickey@cand").unwrap();
@@ -122,7 +122,7 @@ fn sample(
                 let r = play_match(&mut agents, cfg, seed);
                 (r.seats[0].score - r.seats[1].score) as f64
             };
-            let a = if s % 2 == 0 {
+            let a = if s.is_multiple_of(2) {
                 h2h(["vickey@cand", "vickey@inc"], s)
             } else {
                 h2h(["vickey@inc", "vickey@cand"], s)
@@ -199,6 +199,7 @@ pub struct Step {
 
 /// Hill-climb from `start`. Calls `on_step` after each candidate so callers
 /// can persist progress as it happens.
+#[allow(clippy::too_many_arguments)]
 pub fn tune(
     profile: Profile,
     start: Params,

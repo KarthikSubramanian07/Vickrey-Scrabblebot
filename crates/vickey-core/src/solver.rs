@@ -134,7 +134,7 @@ impl<'d> Solver<'d> {
         self.path.clear();
         let budget = self.node_budget;
         let mut sorted = cands;
-        sorted.sort_unstable_by(|&a, &b| self.dict.sig(b).reward.cmp(&self.dict.sig(a).reward));
+        sorted.sort_unstable_by_key(|&i| std::cmp::Reverse(self.dict.sig(i).reward));
         self.dfs(*rack, &sorted, 0);
         let done = self.nodes < self.node_budget;
         self.node_budget = budget;
@@ -263,7 +263,7 @@ mod tests {
 
     fn random_rack(rng: &mut SmallRng, n: usize) -> Rack {
         let mut pool: Vec<usize> = (0..26)
-            .flat_map(|l| std::iter::repeat(l).take(BAG[l] as usize))
+            .flat_map(|l| std::iter::repeat_n(l, BAG[l] as usize))
             .collect();
         let mut r = Rack::EMPTY;
         for _ in 0..n {

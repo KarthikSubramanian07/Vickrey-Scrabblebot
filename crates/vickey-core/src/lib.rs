@@ -4,6 +4,9 @@
 //! racks, the ENABLE dictionary indexed by letter multiset, and an exact
 //! solver for the best set of words a rack can play.
 
+// Fixed 26-slot letter arrays read most clearly as indexed loops.
+#![allow(clippy::needless_range_loop)]
+
 pub mod dict;
 pub mod letters;
 pub mod rack;

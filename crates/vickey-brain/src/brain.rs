@@ -443,7 +443,7 @@ impl Brain {
             if cands.is_empty() {
                 break;
             }
-            cands.sort_unstable_by(|&a, &b| self.dict.sig(b).reward.cmp(&self.dict.sig(a).reward));
+            cands.sort_unstable_by_key(|&i| std::cmp::Reverse(self.dict.sig(i).reward));
             cands.truncate(p.play_candidates);
             let hold = eval(self, &rack);
             let mut best: Option<(f64, u32)> = None;
@@ -454,7 +454,7 @@ impl Brain {
                 let gain = s.reward as f64 * (1.0 + p.liquidity * self.last_lambda)
                     + eval(self, &rest)
                     - hold;
-                if gain > p.play_margin && best.map_or(true, |(g, _)| gain > g) {
+                if gain > p.play_margin && best.is_none_or(|(g, _)| gain > g) {
                     best = Some((gain, i));
                 }
             }
@@ -487,7 +487,7 @@ pub fn letter_prior() -> &'static [f64; ALPHABET] {
         let d = dictionary();
         let mut rng = SmallRng::seed_from_u64(0x5eed);
         let pool: Vec<Letter> = (0..ALPHABET)
-            .flat_map(|l| std::iter::repeat(l).take(vickey_core::BAG[l] as usize))
+            .flat_map(|l| std::iter::repeat_n(l, vickey_core::BAG[l] as usize))
             .collect();
         let mut sum = [0.0; ALPHABET];
         let n = 160;

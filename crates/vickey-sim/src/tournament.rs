@@ -81,7 +81,7 @@ pub fn run_tournament(
                     spec,
                     &params_by_label(label),
                     field,
-                    match_seed ^ (k as u64 + 1) * 31,
+                    match_seed ^ ((k as u64 + 1) * 31),
                 )
             })
             .collect();

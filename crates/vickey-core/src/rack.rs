@@ -97,7 +97,7 @@ impl Rack {
         self.0
             .iter()
             .enumerate()
-            .flat_map(|(l, &n)| std::iter::repeat(l).take(n as usize))
+            .flat_map(|(l, &n)| std::iter::repeat_n(l, n as usize))
     }
 }
 

@@ -111,7 +111,7 @@ enum Cmd {
     },
 }
 
-fn write_field(path: &PathBuf, model: &FieldModel) -> Result<()> {
+fn write_field(path: &std::path::Path, model: &FieldModel) -> Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -129,11 +129,11 @@ fn parse_profile(s: &str) -> vickey_sim::tune::Profile {
     }
 }
 
-fn load_params(p: &PathBuf) -> Params {
+fn load_params(p: &std::path::Path) -> Params {
     Params::load(p).unwrap_or_default()
 }
 
-fn load_field(p: &PathBuf) -> FieldModel {
+fn load_field(p: &std::path::Path) -> FieldModel {
     std::fs::read_to_string(p)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -145,7 +145,7 @@ fn main() -> Result<()> {
     let a = load_params(&cli.params);
     let b = cli
         .params_b
-        .as_ref()
+        .as_deref()
         .map(load_params)
         .unwrap_or_else(|| a.clone());
     let field = load_field(&cli.field);
@@ -202,7 +202,7 @@ fn main() -> Result<()> {
                         spec,
                         &by_label(label),
                         &field,
-                        seed ^ (i as u64 + 1) * 0x9e37,
+                        seed ^ ((i as u64 + 1) * 0x9e37),
                     ));
                 }
             }
@@ -272,7 +272,7 @@ fn main() -> Result<()> {
         }
         Cmd::Compare { profile, n, seed } => {
             let cand = load_params(&cli.params);
-            let inc = cli.params_b.as_ref().map(load_params).unwrap_or_default();
+            let inc = cli.params_b.as_deref().map(load_params).unwrap_or_default();
             let e = vickey_sim::tune::evaluate(
                 parse_profile(&profile),
                 &cand,

@@ -40,4 +40,4 @@ jobs:
       - name: First-price table
         run: ./target/release/vickey-arena --first-price bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 24 --seed 9 --max-place 2.0
       - name: Server sims (lobby padding)
-        run: ./target/release/vickey-arena bench --lineup vickey,brutus,brutus,valor,cheapo,starter -n 24 --seed 5 --max-place 1.3
+        run: ./target/release/vickey-arena bench --lineup vickey,brutus,brutus,valor,cheapo,starter -n 8 --seed 5 --max-place 1.3

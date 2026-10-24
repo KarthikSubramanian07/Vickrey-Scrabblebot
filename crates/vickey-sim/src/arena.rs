@@ -79,7 +79,7 @@ pub fn run_lineup(
                         spec,
                         &params_by_label(label),
                         field,
-                        s ^ (i as u64 + 1) * 0x9e37,
+                        s ^ ((i as u64 + 1) * 0x9e37),
                     )
                 })
                 .collect();

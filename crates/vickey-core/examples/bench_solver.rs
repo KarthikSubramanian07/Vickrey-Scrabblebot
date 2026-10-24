@@ -20,7 +20,7 @@ fn main() {
         let reps = 40;
         for _ in 0..reps {
             let mut pool: Vec<usize> = (0..26)
-                .flat_map(|l| std::iter::repeat(l).take(BAG[l] as usize))
+                .flat_map(|l| std::iter::repeat_n(l, BAG[l] as usize))
                 .collect();
             let mut r = Rack::EMPTY;
             for _ in 0..n {

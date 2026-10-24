@@ -4,6 +4,9 @@
 //! [`engine`], opponents in [`agents`], tournament formats in
 //! [`tournament`], and the evaluation/tuning harness in [`arena`].
 
+// Fixed 26-slot letter arrays read most clearly as indexed loops.
+#![allow(clippy::needless_range_loop)]
+
 pub mod agents;
 pub mod arena;
 pub mod engine;

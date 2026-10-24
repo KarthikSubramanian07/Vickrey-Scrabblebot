@@ -96,7 +96,7 @@ pub fn play_match(agents: &mut [Box<dyn Agent>], cfg: &MatchConfig, seed: u64) -
     let n = agents.len();
     let ids: Vec<u64> = (1..=n as u64).collect();
     let mut bag: Vec<Letter> = (0..26)
-        .flat_map(|l| std::iter::repeat(l).take(BAG[l] as usize))
+        .flat_map(|l| std::iter::repeat_n(l, BAG[l] as usize))
         .collect();
     let mut live: Vec<Live> = (0..n)
         .map(|_| Live {
@@ -176,7 +176,7 @@ pub fn play_match(agents: &mut [Box<dyn Agent>], cfg: &MatchConfig, seed: u64) -
             }
         }
         bids.shuffle(&mut rng);
-        bids.sort_by(|a, b| b.1.cmp(&a.1));
+        bids.sort_by_key(|b| std::cmp::Reverse(b.1)); // stable: shuffled ties stay random
         let mut winner = None;
         let mut paid = 0;
         if let Some(&(w, top)) = bids.first() {
