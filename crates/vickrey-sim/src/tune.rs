@@ -25,12 +25,12 @@ pub enum Profile {
 /// params: the live league's best bots are valuation-driven too, and the
 /// first live matches showed the scripted field alone is too soft.
 const FIELD_FILL: [&str; 8] = [
+    "ramp",
+    "ramp",
+    "flat",
+    "flat",
     "shark",
-    "shark",
-    "grinder",
-    "spender",
-    "nibbler",
-    "starter",
+    "volume",
     "vickrey@pop",
     "vickrey@pop",
 ];

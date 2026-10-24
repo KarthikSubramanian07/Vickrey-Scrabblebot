@@ -325,6 +325,111 @@ fn rand_distr_normal() -> impl rand::distributions::Distribution<f64> {
     N
 }
 
+// ------------------------------------------------------------ live clones
+
+/// Which fitted live family a [`LiveClone`] imitates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloneKind {
+    /// Doppio / Nijello / Heidi / benx: hoard early, ramp bids with match
+    /// progress and balance, spend 67–79 coins in the last quarter, dump at
+    /// the end. Fitted on 250 live matches: `−5 + 2.8·face + 18·progress +
+    /// 13·balance/100`, residual sd ≈ 5.
+    Ramp,
+    /// guesser / postturing / atlas / Chinese Dante: `9.5 + 3·face`, sd 3,
+    /// regardless of time or balance; plays 5+ letter words on sight.
+    Flat,
+}
+
+/// A rival reproduced from regression fits of the live league's top bots
+/// (`runs/research/rivals.md`, section 6).
+pub struct LiveClone {
+    label: String,
+    kind: CloneKind,
+    rng: SmallRng,
+    /// Ramp only: the chance per auction of cashing a 6+ letter word mid-match
+    /// (Doppio plays ~0.5 such words per match).
+    mid_cash: f64,
+}
+
+impl LiveClone {
+    pub fn new(label: &str, kind: CloneKind, seed: u64) -> Self {
+        LiveClone {
+            label: label.to_string(),
+            kind,
+            rng: SmallRng::seed_from_u64(seed),
+            mid_cash: if kind == CloneKind::Ramp { 0.012 } else { 0.0 },
+        }
+    }
+}
+
+impl Agent for LiveClone {
+    fn name(&self) -> String {
+        self.label.clone()
+    }
+
+    fn bid(&mut self, t: &Tracker, letter: Letter) -> i64 {
+        if t.is_last_auction() {
+            return 0;
+        }
+        let face = VALUE[letter] as f64;
+        let z: f64 = self.rng.sample(rand_distr_normal());
+        let b = match self.kind {
+            CloneKind::Ramp => {
+                let bal = t.my_balance().max(0) as f64;
+                -5.0 + 2.8 * face + 18.0 * t.progress() + 13.0 * bal / 100.0 + 5.0 * z
+            }
+            CloneKind::Flat => 9.5 + 3.0 * face + 3.0 * z,
+        };
+        (b.round() as i64).clamp(0, t.my_balance().max(0))
+    }
+
+    fn plays(&mut self, t: &Tracker) -> Vec<String> {
+        let d = dictionary();
+        let mut r = t.my_rack;
+        let mut out = Vec::new();
+        match self.kind {
+            CloneKind::Flat => {
+                while let Some(s) = d.best_word(&r, 5) {
+                    r.sub(&s.rack);
+                    out.push(s.word.to_string());
+                }
+            }
+            CloneKind::Ramp => {
+                // Nothing before the second quarter; then 7+ on sight and
+                // the occasional 6-letter cash-in; dump everything in the
+                // last three auctions.
+                if t.progress() < 0.25 {
+                    return out;
+                }
+                if t.bag_left <= 3 {
+                    return self.final_plays(t);
+                }
+                while let Some(s) = d.best_word(&r, 7) {
+                    r.sub(&s.rack);
+                    out.push(s.word.to_string());
+                }
+                if self.rng.gen_bool(self.mid_cash) {
+                    if let Some(s) = d.best_word(&r, 6) {
+                        r.sub(&s.rack);
+                        out.push(s.word.to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn final_plays(&mut self, t: &Tracker) -> Vec<String> {
+        let d = dictionary();
+        let mut s = Solver::with_budget(d, 200_000);
+        s.solve(&t.my_rack)
+            .word_strings(d)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 // ------------------------------------------------------------ our brain
 
 pub struct Vickrey {
