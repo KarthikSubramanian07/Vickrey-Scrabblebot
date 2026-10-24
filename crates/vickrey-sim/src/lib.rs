@@ -14,5 +14,5 @@ pub mod live;
 pub mod tournament;
 pub mod tune;
 
-pub use agents::{Agent, FieldBot, ServerSim, SimStrategy, Starter, Vickrey};
+pub use agents::{Agent, CloneKind, FieldBot, LiveClone, ServerSim, SimStrategy, Starter, Vickrey};
 pub use engine::{play_match, MatchConfig, MatchResult};

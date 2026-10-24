@@ -1,6 +1,8 @@
 //! Lineups, batch evaluation and summary statistics.
 
-use crate::agents::{Agent, FieldBot, ServerSim, SimStrategy, Starter, Vickrey};
+use crate::agents::{
+    Agent, CloneKind, FieldBot, LiveClone, ServerSim, SimStrategy, Starter, Vickrey,
+};
 use crate::engine::{play_match, MatchConfig};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -17,7 +19,9 @@ pub fn make_agent(spec: &str, params: &Params, field: &FieldModel, seed: u64) ->
         "cheapo" => Box::new(ServerSim::new(SimStrategy::Cheapskate, label, seed)),
         "valor" => Box::new(ServerSim::new(SimStrategy::ValueBidder, label, seed)),
         "brutus" => Box::new(ServerSim::new(SimStrategy::Aggressive, label, seed)),
-        other => Box::new(FieldBot::preset(other, seed)),
+        "ramp" => Box::new(LiveClone::new(label, CloneKind::Ramp, seed)),
+        "flat" => Box::new(LiveClone::new(label, CloneKind::Flat, seed)),
+        other => Box::new(FieldBot::preset_with(other, seed, field.clone())),
     }
 }
 

@@ -19,3 +19,7 @@ Missing files fall back to the defaults compiled into `vickrey-brain`.
 With `ab.json` present, the bot hashes each casual match id to an arm (so a restart mid-match keeps the arm), plays it with the champion or the challenger, and logs the arm in telemetry. After every match it recomputes the scoreboard on Swiss points (`n − place`, what the tournament rewards). Once both arms have 40+ matches and Welch's |t| ≥ 2, it promotes the challenger to `params.json`, or retires it, and removes `ab.json`. Every decision goes to `runs/ab-history.jsonl`. Check progress with `vickrey ab-report`.
 
 The bot rewrites `ab.json`, `params_b.json`, `params.prev.json` and `ab-queue.json` as experiments start, finish and get promoted, so they are git-ignored. Results are appended to `runs/ab-history.jsonl`. A test stops early when the evidence is clear: retired after 15 matches per arm at t ≤ −2.5, promoted after 25 at t ≥ 3.
+
+## Running heavy jobs next to the live bot
+
+Builds, simulations and tuning share the Mac with the bot, whose bids must land inside a one-second window. Run anything heavy through `ops/heavy.sh <command>`: it takes a lock so only one heavy job runs at a time, limits it to two threads, and gives it the lowest scheduling priority. CI and the evolve timer already follow the same limits.

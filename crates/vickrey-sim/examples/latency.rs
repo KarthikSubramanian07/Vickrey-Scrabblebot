@@ -61,7 +61,10 @@ fn main() {
         .nth(1)
         .and_then(|x| x.parse().ok())
         .unwrap_or(6);
-    let p = Params::load(std::path::Path::new("config/params.json")).unwrap_or_default();
+    let p = Params::load(std::path::Path::new(
+        &std::env::var("LAT_PARAMS").unwrap_or("config/params.json".into()),
+    ))
+    .unwrap_or_default();
     let log: Log = Arc::new(Mutex::new((Vec::new(), Vec::new())));
     for seed in 0..4 {
         let mut agents: Vec<Box<dyn Agent>> = vec![Box::new(Timed(

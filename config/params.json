@@ -20,5 +20,8 @@
   "liquidity": 0.6,
   "play_margin": 0.5,
   "play_candidates": 10,
-  "final_solve_ms": 180
+  "final_solve_ms": 180,
+  "bid_deadline_ms": 300,
+  "premium_cap_mult": 1.0,
+  "premium_cap_until": 0.5
 }

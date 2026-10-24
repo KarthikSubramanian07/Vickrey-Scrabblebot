@@ -533,6 +533,19 @@ impl MatchCtx {
         let Some(rec) = self.recs.remove(&auction_id) else {
             return;
         };
+        // Under Vickrey a lost auction clears at or above our bid, so losing
+        // with a bid above the price means the bid never reached the server
+        // in time. The live audit found 284 of these during one server slowdown.
+        if !we_won && winner.is_some() {
+            if let Some(b) = rec.bid.as_ref() {
+                if b.amount > paid && paid > 0 {
+                    warn!(
+                        "m{} GHOST LOSS on auction {auction_id}: bid {} but it cleared at {} (bid late or lost?)",
+                        self.match_id, b.amount, paid
+                    );
+                }
+            }
+        }
         let db = &env.conn.db;
         let top_bid = db
             .visible_auction_top_bids()

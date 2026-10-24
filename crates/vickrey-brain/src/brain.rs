@@ -58,6 +58,8 @@ pub struct Brain {
     pub last_lambda: f64,
     /// Our bid on the open auction, to read censored prices correctly.
     last_bid: i64,
+    /// Wall-clock cut-off for the current decision's sampling, if any.
+    deadline: Option<std::time::Instant>,
 }
 
 impl Brain {
@@ -76,6 +78,7 @@ impl Brain {
             table_at: 0,
             last_lambda: 0.3,
             last_bid: 0,
+            deadline: None,
         }
     }
 
@@ -239,7 +242,12 @@ impl Brain {
             n += 1;
             let len = r.len() as u64 + 1;
             used += len * len * (letters.len() as u64 + 1);
-            if n >= 3 && used >= work {
+            if n >= 3
+                && (used >= work
+                    || self
+                        .deadline
+                        .is_some_and(|d| std::time::Instant::now() >= d))
+            {
                 break;
             }
         }
@@ -436,6 +444,10 @@ impl Brain {
 
     fn bid_inner(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
         self.sync_profile(t);
+        self.deadline = (self.params.bid_deadline_ms > 0).then(|| {
+            std::time::Instant::now()
+                + std::time::Duration::from_millis(self.params.bid_deadline_ms)
+        });
         let balance = t.my_balance().max(0);
         if t.is_last_auction() || balance <= 0 {
             return BidDecision::default();
@@ -473,6 +485,28 @@ impl Brain {
         }
         let d = self.dist(t, letter);
         let mut truthful = (value / lambda).min(balance as f64);
+        // Completion premium: 64% of the valuable auctions we lost live fed
+        // a rival's 7+ word, with a median shortfall of 5 coins. When this
+        // letter turns the rack into a 7+ word right now, bid over value;
+        // under Vickrey the premium is only ever paid when it wins.
+        if self.params.completion_premium > 0.0 && value >= self.params.completion_min_value {
+            let dict = self.dict;
+            let has7 = |r: &Rack| !dict.candidates(r, 7).is_empty();
+            if !has7(&t.my_rack) && has7(&t.my_rack.with(letter)) {
+                truthful *= 1.0 + self.params.completion_premium;
+            }
+        }
+        // Endgame: with few usable auctions left, leftover coins are worth
+        // nothing, so a letter worth real points deserves everything we have.
+        // Under Vickrey we only pay the runner-up, so this costs nothing extra
+        // when we would have won anyway.
+        let left = Self::usable_future(t) + 1;
+        if self.params.endgame_allin_auctions > 0
+            && left <= self.params.endgame_allin_auctions
+            && value >= self.params.endgame_allin_min_value
+        {
+            truthful = balance as f64;
+        }
         // Prices run ~35% hot in the opening quarter; optionally bid under value there.
         if self.params.opening_shade > 0.0 && t.progress() < 0.25 {
             truthful *= 1.0 - self.params.opening_shade.min(0.9);
@@ -509,10 +543,23 @@ impl Brain {
         }
         // Premium letters (J, K, Q, X, Z) need specific words to pay off; the
         // live league's best bot refuses to pay much over market for them.
-        if self.params.premium_cap_mult > 0.0 && VALUE[letter] >= 5 {
+        if self.params.premium_cap_mult > 0.0
+            && VALUE[letter] >= 5
+            && t.progress() < self.params.premium_cap_until
+        {
             let cap = (self.params.premium_cap_mult * d.median).ceil() as i64;
             amount = amount.min(cap.max(1));
         }
+        // No rival can bid more than their balance, so under Vickrey any bid
+        // above the richest rival's balance + 1 wins with the same payment.
+        // Clamping there is strictly dominant and makes all-in bids cost
+        // nothing extra against a broke table.
+        let rival_cap = t.max_opponent_balance().max(0) + 1;
+        let amount = if matches!(t.kind, AuctionKind::Vickrey) {
+            amount.min(rival_cap)
+        } else {
+            amount
+        };
         let amount = amount.clamp(0, balance);
         BidDecision {
             amount,
@@ -841,6 +888,91 @@ mod tests {
             "{f:?} median {median}"
         );
         assert!(f.amount >= p.amount);
+    }
+
+    #[test]
+    fn endgame_allin_bids_the_balance_on_valuable_letters() {
+        let p = Params {
+            endgame_allin_auctions: 6,
+            endgame_allin_min_value: 3.0,
+            ..Params::default()
+        };
+        let e = index('E').unwrap();
+        // 4 usable auctions left, E completes CAZIQUE: go all in.
+        let mut t = tracker_with("CAZIQU", 4);
+        t.on_participant(1, 37, 0);
+        let mut b = Brain::new(p.clone(), FieldModel::default(), 8);
+        assert_eq!(b.bid(&t, e).amount, 37);
+        // Same rack with 40 left: normal pacing, well under the balance.
+        let mut t2 = tracker_with("CAZIQU", 40);
+        t2.on_participant(1, 100, 0);
+        let mut b2 = Brain::new(p, FieldModel::default(), 8);
+        assert!(b2.bid(&t2, e).amount < 100);
+    }
+
+    #[test]
+    fn vickrey_bids_never_exceed_the_richest_rival_plus_one() {
+        let e = index('E').unwrap();
+        let mut t = tracker_with("CAZIQU", 4);
+        t.on_participant(1, 80, 0);
+        for id in 2..=6 {
+            t.on_participant(id, 9, 0);
+        }
+        let mut b = Brain::new(
+            Params {
+                endgame_allin_auctions: 6,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            8,
+        );
+        // All-in would say 80; the richest rival has 9, so 10 wins just the same.
+        assert_eq!(b.bid(&t, e).amount, 10);
+    }
+
+    #[test]
+    fn completion_premium_raises_the_bid_only_when_a_seven_completes() {
+        // Fixed λ = 1 so a bid equals its value in coins and the balance cap
+        // does not bind; late in the match so futures are few.
+        let base = Params {
+            lambda_min: 1.0,
+            lambda_max: 1.0,
+            ..Params::default()
+        };
+        let prem_p = Params {
+            completion_premium: 0.25,
+            completion_min_value: 8.0,
+            ..base.clone()
+        };
+        let e = index('E').unwrap();
+        // CAZIQU + E completes CAZIQUE (81 points): premium applies.
+        let t = tracker_with("CAZIQU", 6);
+        let mut plain = Brain::new(base.clone(), FieldModel::default(), 5);
+        let mut prem = Brain::new(prem_p.clone(), FieldModel::default(), 5);
+        let (a, b) = (plain.bid(&t, e).amount, prem.bid(&t, e).amount);
+        assert!(a > 0 && b > a, "plain {a} premium {b}");
+        // A rack that already holds a 7-letter word: no premium.
+        let t2 = tracker_with("CAZIQUE", 6);
+        let mut plain2 = Brain::new(base, FieldModel::default(), 5);
+        let mut prem2 = Brain::new(prem_p, FieldModel::default(), 5);
+        assert_eq!(plain2.bid(&t2, e).amount, prem2.bid(&t2, e).amount);
+    }
+
+    #[test]
+    fn premium_cap_stops_applying_after_its_window() {
+        let z = index('Z').unwrap();
+        let p = Params {
+            premium_cap_mult: 0.5,
+            premium_cap_until: 0.5,
+            ..Params::default()
+        };
+        let mut late = tracker_with("ABLEIT", 20);
+        for _ in 0..40 {
+            late.on_auction_open(index('E').unwrap(), 20);
+        }
+        let mut free = Brain::new(Params::default(), FieldModel::default(), 4);
+        let mut capped = Brain::new(p, FieldModel::default(), 4);
+        assert_eq!(free.bid(&late, z).amount, capped.bid(&late, z).amount);
     }
 
     #[test]
