@@ -31,35 +31,43 @@ Before writing a line of code we read the server source end to end and mined the
 
 ## How Vickrey thinks
 
-```
-                public events (auctions, results, words, balances)
-                                     │
-                                     ▼
- ┌───────────────────────────────────────────────────────────────────────┐
- │ Tracker: reconstructs every rack it can, deduces rivals' hidden tiles │
- │          from what they play, and keeps the unseen-letter pool exact  │
- └───────────────────────────────────────────────────────────────────────┘
-          │                         │                          │
-          ▼                         ▼                          ▼
- ┌─────────────────┐   ┌──────────────────────────┐   ┌──────────────────┐
- │ Valuation       │   │ Market                   │   │ Play policy      │
- │ E[T(R+L+F)] −   │   │ rivals' max bid ~        │   │ cash a word when │
- │ E[T(R+F)] over  │   │ log-normal(letter,phase) │   │ reward·(1+ρλ) +  │
- │ sampled futures │   │ × heat, capped at the    │   │ E[hold rest] >   │
- │ F; T = best     │   │ richest rival's balance  │   │ E[hold all]; at  │
- │ word partition  │   │ (censored learning)      │   │ the last auction │
- └────────┬────────┘   └────────────┬─────────────┘   │ dump the exact   │
-          │                         │                 │ best partition   │
-          └────────────┬────────────┘                 └──────────────────┘
-                       ▼
-          ┌──────────────────────────────┐
-          │ Pacing: solve λ (points/coin)│
-          │ so expected spend over the   │
-          │ usable auctions = budget,    │
-          │ then bid V/λ (Vickrey) or    │
-          │ argmax (V/λ−b)·P(win|b)      │
-          │ (first-price)                │
-          └──────────────────────────────┘
+```mermaid
+flowchart TB
+    EV["Public events<br/>auctions · results · words · balances"]
+    TR["Tracker<br/>reconstructs every rack it can, deduces rivals' hidden tiles,<br/>keeps the unseen-letter pool exact"]
+    EV --> TR
+    TR --> VAL
+    TR --> MK
+    TR --> PL
+    subgraph VAL["Valuation"]
+        V1["T(rack) = best set of disjoint words<br/>exact solver / greedy estimator"]
+        V2["sample futures F from the unseen pool"]
+        V3["marginal value = E[T(R+L+F)] − E[T(R+F)]<br/>common random numbers"]
+        V2 --> V3
+        V1 --> V3
+    end
+    subgraph MK["Market"]
+        M1["rivals' max bid ~ log-normal(letter, phase) × heat"]
+        M2["capped at the richest rival's balance"]
+        M3["censored learning when we lose"]
+        M1 --> M2 --> M3
+    end
+    VAL --> PACE
+    MK --> PACE
+    subgraph PACE["Pacing"]
+        P1["solve λ (points per coin) so expected spend<br/>over the usable auctions = budget"]
+        P2["Vickrey: bid V/λ"]
+        P3["first-price: argmax (V/λ − b)·P(win|b)"]
+        P1 --> P2
+        P1 --> P3
+    end
+    subgraph PL["Play policy"]
+        L1["cash a word when reward·(1+ρμ) + E[hold rest] > E[hold all]"]
+        L2["starved or late: cash shorter words"]
+        L3["last auction (or slow server): dump the exact best partition"]
+    end
+    PACE --> BID["bid"]
+    PL --> WORDS["submit words"]
 ```
 
 - **Terminal value `T(rack)`** is the best set of disjoint dictionary words a rack can play. That is exactly what the final dump scores. `vickrey-core` computes it with a trie over letter multisets and an anytime branch-and-bound solver. It is exact in about 9 ms for 20 letters, and a greedy estimator handles the Monte Carlo inner loop.
@@ -80,12 +88,23 @@ The Vickrey engine plays as bot **Karthik** for team **Karthik**. Within its fir
 
 ## Self-improvement
 
-```
- live league (public SQL) ──► vickrey-arena refit ──► config/field.json
-                                                         │
- runs/summary.jsonl (our matches) ◄── vickrey run ◄── config/params*.json
-                                                         ▲
-                       vickrey-arena tune (paired, 2-batch significance)
+```mermaid
+flowchart LR
+    LEAGUE[("live league<br/>public SQL")]
+    REFIT["vickrey-arena refit"]
+    FIELD["config/field.json<br/>rivals' price model"]
+    TUNE["vickrey-arena tune<br/>paired, 2-batch significance"]
+    PARAMS["config/params.json<br/>config/params_duel.json"]
+    BOT["vickrey run<br/>hot-reloads config each match"]
+    SUMMARY["runs/summary.jsonl"]
+    AB["live A/B gate<br/>champion vs challenger on Swiss points<br/>promote at t ≥ 2 (40/arm) or t ≥ 3 (25/arm)<br/>retire at t ≤ −2 (40/arm) or t ≤ −2.5 (15/arm)"]
+    QUEUE["config/ab-queue.json<br/>next experiments"]
+
+    LEAGUE --> REFIT --> FIELD --> TUNE --> PARAMS --> BOT
+    BOT --> SUMMARY --> AB
+    AB -- promoted --> PARAMS
+    AB -- test ended --> QUEUE -- starts next --> BOT
+    BOT --> LEAGUE
 ```
 
 `vickrey-arena evolve` refits the rivals' price model from the most recent all-real matches. It then hill-climbs both parameter profiles in the simulator, with the candidate and the incumbent at the same tables on the same seeds, and adopts a change only if it wins clearly on two independent batches. The live bot hot-reloads `config/` at the start of every match. The simulator can't model the strongest live bots, so the final word belongs to the league itself. **Live A/B testing** (`config/ab.json`) splits casual matches between the champion and a challenger, scores both arms on Swiss points, and promotes or retires the challenger once Welch's |t| ≥ 2 with 40+ matches per arm. Tournament matches always use the champion. `vickrey ab-report` shows the scoreboard.
