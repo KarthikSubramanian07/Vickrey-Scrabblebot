@@ -83,6 +83,11 @@ pub struct AbConfig {
     /// Free-form label written to telemetry.
     #[serde(default)]
     pub name: String,
+    /// When the test started (Unix ms). Only matches from then on count, so
+    /// consecutive tests that reuse the same challenger file never mix.
+    /// Missing: the modification time of `ab.json`.
+    #[serde(default)]
+    pub started_ms: Option<i64>,
 }
 
 fn half() -> f64 {
@@ -93,7 +98,16 @@ pub fn load_ab(dir: &Path) -> Option<AbConfig> {
     let path = dir.join("ab.json");
     let text = std::fs::read_to_string(&path).ok()?;
     match serde_json::from_str::<AbConfig>(&text) {
-        Ok(ab) if dir.join(&ab.challenger).exists() => Some(ab),
+        Ok(mut ab) if dir.join(&ab.challenger).exists() => {
+            if ab.started_ms.is_none() {
+                ab.started_ms = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as i64);
+            }
+            Some(ab)
+        }
         Ok(ab) => {
             tracing::warn!("ab.json names missing challenger {}", ab.challenger);
             None

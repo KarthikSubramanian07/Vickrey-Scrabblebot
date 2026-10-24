@@ -25,6 +25,8 @@ pub const T_DECIDE: f64 = 2.0;
 #[derive(Deserialize)]
 struct Line {
     #[serde(default)]
+    ts: i64,
+    #[serde(default)]
     arm: Option<String>,
     place: usize,
     n_players: usize,
@@ -86,6 +88,10 @@ pub fn scoreboard(summary: &Path, ab: &AbConfig) -> (ArmStats, ArmStats) {
             continue;
         };
         if l.tournament_id.is_some() || l.resumed || l.n_players < 3 {
+            continue;
+        }
+        // Only this test's window.
+        if ab.started_ms.is_some_and(|start| l.ts < start) {
             continue;
         }
         let arm = l.arm.unwrap_or_default();
@@ -195,7 +201,11 @@ pub fn advance_queue(config_dir: &Path) -> Option<String> {
     let text = serde_json::to_string_pretty(&challenger).ok()? + "\n";
     serde_json::from_str::<vickrey_brain::Params>(&text).ok()?;
     std::fs::write(config_dir.join("params_b.json"), text).ok()?;
-    let ab = serde_json::json!({"challenger": "params_b.json", "share": next.get("share").and_then(|v| v.as_f64()).unwrap_or(0.5), "name": name});
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let ab = serde_json::json!({"challenger": "params_b.json", "share": next.get("share").and_then(|v| v.as_f64()).unwrap_or(0.5), "name": name, "started_ms": now_ms});
     std::fs::write(
         config_dir.join("ab.json"),
         serde_json::to_string_pretty(&ab).ok()? + "\n",
@@ -277,13 +287,45 @@ mod tests {
     }
 
     #[test]
+    fn window_ignores_matches_from_earlier_tests() {
+        let dir = std::env::temp_dir().join(format!("vickrey-abw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut body = String::new();
+        for (ts, arm) in [
+            (100, "B:params_b.json"),
+            (200, "A"),
+            (1_000, "B:params_b.json"),
+            (1_100, "A"),
+        ] {
+            body.push_str(&format!(
+                "{{\"ts\":{ts},\"arm\":\"{arm}\",\"place\":2,\"n_players\":6,\"our_score\":80,\"resumed\":false}}\n"
+            ));
+        }
+        std::fs::write(dir.join("summary.jsonl"), body).unwrap();
+        let ab = AbConfig {
+            challenger: "params_b.json".into(),
+            share: 0.5,
+            name: "t".into(),
+            started_ms: Some(900),
+        };
+        let (a, b) = scoreboard(&dir.join("summary.jsonl"), &ab);
+        assert_eq!((a.n, b.n), (1, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn promotes_a_clearly_better_challenger() {
         let dir = std::env::temp_dir().join(format!("vickrey-ab-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("params.json"), "{\"min_play_len\": 7}").unwrap();
         std::fs::write(dir.join("b.json"), "{\"min_play_len\": 5}").unwrap();
-        std::fs::write(dir.join("ab.json"), "{\"challenger\": \"b.json\"}").unwrap();
+        std::fs::write(
+            dir.join("ab.json"),
+            "{\"challenger\": \"b.json\", \"started_ms\": 0}",
+        )
+        .unwrap();
         let ab = crate::config::load_ab(&dir).unwrap();
         // B places 1–2, A places 4–5.
         let mut rows = Vec::new();
