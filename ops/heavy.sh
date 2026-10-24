@@ -14,4 +14,5 @@ until mkdir "$LOCK" 2>/dev/null; do
 done
 echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
-exec nice -n 19 "$@"
+# Run as a child (not exec) so the trap releases the lock when the job ends.
+nice -n 19 "$@"

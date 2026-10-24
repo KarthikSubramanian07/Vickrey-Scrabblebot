@@ -21,6 +21,8 @@ jobs:
     runs-on: [self-hosted, vickrey]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false # keep target/ between runs: incremental builds on the self-hosted Mac
       # Self-hosted Mac: stable Rust with rustfmt and clippy is already installed.
       - run: cargo fmt --all -- --check
       - run: nice -n 19 cargo clippy --workspace --all-targets -- -D warnings
@@ -32,6 +34,8 @@ jobs:
     needs: check
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false # keep target/ between runs: incremental builds on the self-hosted Mac
       - run: nice -n 19 cargo build --release -p vickrey-sim --bin vickrey-arena
       - name: Six-seat table vs the calibrated field
         run: nice -n 19 ./target/release/vickrey-arena bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0

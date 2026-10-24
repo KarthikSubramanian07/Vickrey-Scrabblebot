@@ -34,6 +34,11 @@ for _ in $(seq 1 160); do
   sleep 15
 done
 (cd "$RUNNER" && ./svc.sh stop >/dev/null 2>&1)
+# Optional extra work while the bot is parked (simulations, tuning).
+if [[ -n "${VICKREY_WINDOW_HOOK:-}" ]]; then
+  echo "running window hook: $VICKREY_WINDOW_HOOK"
+  bash -c "$VICKREY_WINDOW_HOOK" || echo "window hook failed"
+fi
 echo "runner stopped; restoring the bot"
 kill "$IDLE_PID" 2>/dev/null || true
 sleep 2

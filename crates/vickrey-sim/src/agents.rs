@@ -178,6 +178,14 @@ impl FieldBot {
         }
     }
 
+    /// Named presets spanning the live leaderboard, pricing from `field`
+    /// (the same fitted model the brain uses, so both sides see one market).
+    pub fn preset_with(kind: &str, seed: u64, field: FieldModel) -> Self {
+        let mut b = Self::preset(kind, seed);
+        b.field = field;
+        b
+    }
+
     /// Named presets spanning the live leaderboard.
     pub fn preset(kind: &str, seed: u64) -> Self {
         let style = match kind {
