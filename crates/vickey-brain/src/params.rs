@@ -53,6 +53,10 @@ pub struct Params {
     pub min_play_len: usize,
     /// Value of playing now: liquidity credit per point, times λ.
     pub liquidity: f64,
+    /// Price liquidity with μ (marginal points per coin under the balance
+    /// cap) instead of the pacing λ. Off by default: neutral-to-slightly
+    /// worse in simulation; the tuner may switch it on.
+    pub mu_liquidity: bool,
     /// A mid-match play must beat holding by this many points.
     pub play_margin: f64,
     /// How many top words to consider per play decision.
@@ -83,6 +87,7 @@ impl Default for Params {
             deny_max_players: 2,
             min_play_len: 6,
             liquidity: 0.6,
+            mu_liquidity: false,
             play_margin: 0.5,
             play_candidates: 10,
             final_solve_ms: 180,

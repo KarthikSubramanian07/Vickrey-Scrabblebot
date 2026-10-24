@@ -282,25 +282,28 @@ impl Brain {
         )
     }
 
-    /// Solve for λ so expected spend over the usable auctions left matches budget.
-    fn pace(&mut self, t: &Tracker) -> f64 {
-        let p = &self.params;
-        let balance = t.my_balance().max(0) as f64;
-        // Auctions still to come whose letters we can use, including the open one.
-        let n = (Self::usable_future(t) + 1) as f64;
-        let budget = balance * (1.0 + p.income_factor * (1.0 - t.progress())) * p.spend_target;
+    /// (weight, value, opposing-bid distribution) for every letter that can still come up.
+    fn letter_mix(&self, t: &Tracker) -> Vec<(f64, f64, BidDist)> {
         let unseen = t.unseen();
         let total = unseen.len().max(1) as f64;
-        let dists: Vec<(f64, f64, BidDist)> = (0..ALPHABET)
+        (0..ALPHABET)
             .filter(|&l| unseen.0[l] > 0)
             .map(|l| (unseen.0[l] as f64 / total, self.table[l], self.dist(t, l)))
-            .collect();
+            .collect()
+    }
+
+    /// Coins we plan to spend from here on if our balance were `balance`.
+    fn budget_for(&self, t: &Tracker, balance: f64) -> f64 {
+        let p = &self.params;
+        balance * (1.0 + p.income_factor * (1.0 - t.progress())) * p.spend_target
+    }
+
+    /// λ that makes expected spend over `n` auctions match `budget`, with
+    /// every bid capped at `cap` coins.
+    fn solve_lambda(&self, mix: &[(f64, f64, BidDist)], n: f64, cap: f64, budget: f64) -> f64 {
+        let p = &self.params;
         let spend = |lam: f64| -> f64 {
-            dists
-                .iter()
-                .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(balance)))
-                .sum::<f64>()
-                * n
+            mix.iter().map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap))).sum::<f64>() * n
         };
         let (lo, hi) = (p.lambda_min, p.lambda_max);
         if spend(lo) <= budget {
@@ -320,6 +323,43 @@ impl Brain {
             }
         }
         (0.5 * (a + b)).exp()
+    }
+
+    /// Expected points bought over `n` auctions at shadow price `lam` with bids capped at `cap`.
+    fn expected_points(mix: &[(f64, f64, BidDist)], n: f64, lam: f64, cap: f64) -> f64 {
+        mix.iter().map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap))).sum::<f64>() * n
+    }
+
+    /// Auctions still to come whose letters we can use, including the open one.
+    fn usable_now(t: &Tracker) -> f64 {
+        (Self::usable_future(t) + 1) as f64
+    }
+
+    /// Solve for λ so expected spend over the usable auctions left matches budget.
+    fn pace(&mut self, t: &Tracker) -> f64 {
+        let balance = t.my_balance().max(0) as f64;
+        let mix = self.letter_mix(t);
+        self.solve_lambda(&mix, Self::usable_now(t), balance, self.budget_for(t, balance))
+    }
+
+    /// Marginal points from one more coin right now (μ). Unlike the pacing
+    /// λ — which collapses to its floor when we are broke, because capped
+    /// bids spend little — μ is high exactly when the balance cap binds.
+    /// Finite difference of expected points bought with `B` vs `B + Δ` coins.
+    pub fn money_value(&mut self, t: &Tracker) -> f64 {
+        if t.is_last_auction() || Self::usable_future(t) == 0 {
+            return 0.0;
+        }
+        self.refresh_table(t);
+        let b0 = t.my_balance().max(0) as f64;
+        let delta = (0.25 * b0).max(10.0);
+        let b1 = b0 + delta;
+        let mix = self.letter_mix(t);
+        let n = Self::usable_now(t);
+        let l0 = self.solve_lambda(&mix, n, b0, self.budget_for(t, b0));
+        let l1 = self.solve_lambda(&mix, n, b1, self.budget_for(t, b1));
+        let gain = Self::expected_points(&mix, n, l1, b1) - Self::expected_points(&mix, n, l0, b0);
+        (gain / delta).clamp(0.0, 3.0)
     }
 
     /// Decide our bid on the open auction for `letter`.
@@ -418,6 +458,10 @@ impl Brain {
         if t.is_last_auction() {
             return self.final_plays(&t.my_rack);
         }
+        if self.dict.candidates(&t.my_rack, self.params.min_play_len).is_empty() {
+            return Vec::new();
+        }
+        let mu = if self.params.mu_liquidity { self.money_value(t) } else { self.last_lambda };
         let p = self.params.clone();
         let mut rack = t.my_rack;
         let mut out = Vec::new();
@@ -451,7 +495,7 @@ impl Brain {
                 let s = self.dict.sig(i);
                 let mut rest = rack;
                 rest.sub(&s.rack);
-                let gain = s.reward as f64 * (1.0 + p.liquidity * self.last_lambda)
+                let gain = s.reward as f64 * (1.0 + p.liquidity * mu)
                     + eval(self, &rest)
                     - hold;
                 if gain > p.play_margin && best.is_none_or(|(g, _)| gain > g) {
@@ -542,6 +586,18 @@ mod tests {
         let b = Brain::new(Params::default(), FieldModel::default(), 1);
         let words = b.final_plays(&Rack::from_word("CAZIQUEXI"));
         assert!(words.iter().any(|w| w.len() == 7));
+    }
+
+    #[test]
+    fn money_is_worth_more_when_broke() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 5);
+        let mut t = tracker_with("ACDESUX", 20);
+        t.on_participant(1, 8, 50);
+        let broke = b.money_value(&t);
+        t.on_participant(1, 200, 50);
+        let rich = b.money_value(&t);
+        assert!(broke > rich, "broke {broke} rich {rich}");
+        assert!(broke > 0.05);
     }
 
     #[test]

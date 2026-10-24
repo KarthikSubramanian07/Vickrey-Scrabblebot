@@ -21,7 +21,10 @@ pub enum Profile {
     Duel,
 }
 
-const FIELD_FILL: [&str; 6] = ["shark", "shark", "grinder", "spender", "nibbler", "starter"];
+/// Rivals drawn for multi-seat tables. `vickey@pop` seats run the incumbent's
+/// params: the live league's best bots are valuation-driven too, and the
+/// first live matches showed the scripted field alone is too soft.
+const FIELD_FILL: [&str; 8] = ["shark", "shark", "grinder", "spender", "nibbler", "starter", "vickey@pop", "vickey@pop"];
 
 /// Mean and standard error of `cand − inc` per match.
 #[derive(Clone, Copy, Debug, Default, Serialize)]
@@ -166,7 +169,7 @@ pub fn mutate(p: &Params, profile: Profile, rng: &mut SmallRng) -> Params {
         let lognorm =
             |x: f64, s: f64, rng: &mut SmallRng| x * (rng.gen_range(-1.0..1.0f64) * s).exp();
         let lin = |x: f64, s: f64, rng: &mut SmallRng| x + rng.gen_range(-1.0..1.0f64) * s;
-        match rng.gen_range(0..12) {
+        match rng.gen_range(0..13) {
             0 => q.income_factor = lin(q.income_factor, 0.4, rng).clamp(0.0, 3.0),
             1 => q.spend_target = lin(q.spend_target, 0.2, rng).clamp(0.5, 2.0),
             2 => q.choice_mult = lin(q.choice_mult, 0.4, rng).clamp(0.6, 3.5),
@@ -180,6 +183,7 @@ pub fn mutate(p: &Params, profile: Profile, rng: &mut SmallRng) -> Params {
                     (q.min_play_len as i64 + rng.gen_range(-1..=1)).clamp(3, 8) as usize
             }
             9 => q.cheap_grab_value = lognorm(q.cheap_grab_value, 0.5, rng).clamp(0.1, 5.0),
+            11 if rng.gen_bool(0.3) => q.mu_liquidity = !q.mu_liquidity,
             10 if profile == Profile::Duel => {
                 q.deny_weight = lin(q.deny_weight, 0.3, rng).clamp(0.0, 1.5)
             }
