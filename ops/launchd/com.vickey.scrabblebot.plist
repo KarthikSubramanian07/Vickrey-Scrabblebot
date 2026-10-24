@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Vickey autopilot as a per-user LaunchAgent. ops/install-launchd.sh fills in
+  __REPO__ and __HOME__ and loads it; edit there, not in ~/Library/LaunchAgents.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.vickey.scrabblebot</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/target/release/vickey</string>
+    <string>run</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>__HOME__</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>RUST_LOG</key>
+    <string>info</string>
+    <key>VICKEY_TOKEN_FILE</key>
+    <string>__HOME__/.config/vickey/token</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Restart at most every 10 s if it keeps exiting. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <!-- Bids have a 1 s window: ask for foreground-class scheduling. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/runs/vickey.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/runs/vickey.err.log</string>
+</dict>
+</plist>

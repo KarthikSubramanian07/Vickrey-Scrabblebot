@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Build the simulator and load the 3-hourly self-improvement LaunchAgent.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LABEL="com.vickey.evolve"
+DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
+DOMAIN="gui/$(id -u)"
+(cd "$ROOT" && cargo build --release -p vickey-sim --bin vickey-arena)
+mkdir -p "$ROOT/runs" "$HOME/Library/LaunchAgents"
+sed -e "s#__REPO__#$ROOT#g" "$ROOT/ops/launchd/$LABEL.plist" > "$DEST"
+plutil -lint "$DEST" >/dev/null
+launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+launchctl bootstrap "$DOMAIN" "$DEST"
+echo "loaded $LABEL (every 3 h); logs: $ROOT/runs/evolve.err.log, history: $ROOT/runs/evolution.jsonl"
