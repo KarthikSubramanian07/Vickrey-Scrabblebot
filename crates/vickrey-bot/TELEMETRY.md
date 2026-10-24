@@ -56,6 +56,7 @@ Each line has a `type`.
 | `ms_left` | i64? | `closes_at` minus our clock after deciding (includes clock skew) |
 | `fast` | bool | The latency governor cut Monte Carlo samples for this decision |
 | `rebid` | bool | Our rack changed while the auction was open, so we re-priced; `bid` and `rack` hold the latest values |
+| `anchor` | i64? | The instant bid sent as the auction opened, before plays and valuation (live only). `bid.amount` is the full decision that replaced it; when the replacement was rejected as late, the anchor is what stood |
 | `words` | string[] | Words we sent while this auction was open (`final` dump on the last one) |
 | `winner` | u64? | Winning bot id; null if nobody bid |
 | `we_won` | bool | |

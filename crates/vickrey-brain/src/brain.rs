@@ -442,6 +442,50 @@ impl Brain {
         d
     }
 
+    /// A near-instant bid for the moment an auction opens: the cached
+    /// per-letter value table (or the letter prior before the first table)
+    /// over the last pacing multiplier, with the same premium and rival
+    /// clamps as the full decision. Live, the server's reducer queue runs up
+    /// to a second behind at peak and rejects bids sent 150 ms after the open
+    /// as "Auction closed"; this bid goes out first and the full valuation
+    /// replaces it when it lands in time.
+    pub fn anchor_bid(&mut self, t: &Tracker, letter: Letter) -> i64 {
+        self.sync_profile(t);
+        let balance = t.my_balance().max(0);
+        if t.is_last_auction() || balance <= 0 {
+            return 0;
+        }
+        let value = if self.table_rack.is_some() {
+            self.table[letter]
+        } else {
+            letter_prior()[letter]
+        };
+        if value < self.params.min_value {
+            return 0;
+        }
+        let lambda = self.last_lambda.max(self.params.lambda_min).max(1e-3);
+        let mut truthful = value / lambda;
+        if self.params.opening_shade > 0.0 && t.progress() < 0.25 {
+            truthful *= 1.0 - self.params.opening_shade.min(0.9);
+        }
+        // First price: no time to optimise the shade; bid well under value.
+        if matches!(t.kind, AuctionKind::FirstPrice) && self.params.first_price_shade {
+            truthful *= 0.7;
+        }
+        let mut amount = truthful.floor() as i64;
+        if self.params.premium_cap_mult > 0.0
+            && VALUE[letter] >= 5
+            && t.progress() < self.params.premium_cap_until
+        {
+            let cap = (self.params.premium_cap_mult * self.dist(t, letter).median).ceil() as i64;
+            amount = amount.min(cap.max(1));
+        }
+        if matches!(t.kind, AuctionKind::Vickrey) {
+            amount = amount.min(t.max_opponent_balance().max(0) + 1);
+        }
+        amount.clamp(0, balance)
+    }
+
     fn bid_inner(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
         self.sync_profile(t);
         self.deadline = (self.params.bid_deadline_ms > 0).then(|| {
@@ -712,6 +756,25 @@ mod tests {
         t.set_my_rack(Rack::from_word(rack));
         t.on_auction_open(index('E').unwrap(), bag_left);
         t
+    }
+
+    #[test]
+    fn anchor_bid_is_bounded_and_near_the_full_bid() {
+        let mut b = Brain::new(Params::default(), FieldModel::default(), 3);
+        let t = tracker_with("CAZIQU", 30);
+        let e = index('E').unwrap();
+        // Before any table exists the anchor comes from the letter prior.
+        let a0 = b.anchor_bid(&t, e);
+        assert!((0..=100).contains(&a0), "{a0}");
+        let full = b.bid(&t, e);
+        // After a full decision the table and lambda are warm: same order of magnitude.
+        let a1 = b.anchor_bid(&t, e);
+        assert!(a1 > 0, "anchor {a1} full {full:?}");
+        assert!(
+            (a1 as f64) <= 2.0 * full.amount.max(1) as f64 + 5.0,
+            "anchor {a1} full {full:?}"
+        );
+        assert_eq!(b.anchor_bid(&tracker_with("CAZIQU", 0), e), 0);
     }
 
     #[test]

@@ -72,6 +72,9 @@ pub enum MatchLine {
         ms_left: Option<i64>,
         fast: bool,
         rebid: bool,
+        /// The instant anchor bid sent as the auction opened (live only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<i64>,
         words: Vec<String>,
         winner: Option<u64>,
         we_won: bool,
@@ -268,6 +271,7 @@ mod tests {
             ms_left: Some(900),
             fast: false,
             rebid: false,
+            anchor: None,
             words: vec![],
             winner: Some(4),
             we_won: false,
