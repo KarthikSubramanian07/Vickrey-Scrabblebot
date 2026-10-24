@@ -73,6 +73,28 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Refit the field price model from the live server's public history.
+    Refit {
+        /// Use the most recent N all-real matches.
+        #[arg(long, default_value_t = 200)]
+        last: usize,
+        #[arg(long, default_value = vickey_sim::live::DEFAULT_HOST)]
+        host: String,
+        #[arg(long, default_value = vickey_sim::live::DEFAULT_DB)]
+        db: String,
+    },
+    /// Self-improvement cycle: refit the field from live data, then tune
+    /// both profiles against it. Only improvements are written.
+    Evolve {
+        #[arg(long, default_value_t = 12)]
+        iters: u32,
+        #[arg(long, default_value_t = 32)]
+        matches: u32,
+        #[arg(long, default_value_t = 200)]
+        last: usize,
+        #[arg(long, default_value = "config/params_duel.json")]
+        duel_out: PathBuf,
+    },
     /// Print the compiled-in default params as JSON.
     Defaults,
     /// Run whole tournaments and report how often each entrant places.
@@ -84,6 +106,16 @@ enum Cmd {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+}
+
+fn write_field(path: &PathBuf, model: &FieldModel) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(model)? + "\n")?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
 }
 
 fn parse_profile(s: &str) -> vickey_sim::tune::Profile {
@@ -237,6 +269,74 @@ fn main() -> Result<()> {
                 e.t(),
                 e.n
             );
+        }
+        Cmd::Refit { last, host, db } => {
+            let h = vickey_sim::live::fetch(&host, &db)?;
+            let (model, n) = vickey_sim::live::refit(&h, last, &field);
+            write_field(&cli.field, &model)?;
+            eprintln!(
+                "refit on {n} all-real matches ({} auctions total) -> {}",
+                h.auctions.len(),
+                cli.field.display()
+            );
+        }
+        Cmd::Evolve {
+            iters,
+            matches,
+            last,
+            duel_out,
+        } => {
+            use std::io::Write;
+            let started = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs();
+            let h = vickey_sim::live::fetch(
+                vickey_sim::live::DEFAULT_HOST,
+                vickey_sim::live::DEFAULT_DB,
+            )?;
+            let (model, n) = vickey_sim::live::refit(&h, last, &field);
+            write_field(&cli.field, &model)?;
+            eprintln!("field refit on {n} matches");
+            let mut accepted = [0u32; 2];
+            for (k, (prof, out)) in [("multi", cli.params.clone()), ("duel", duel_out.clone())]
+                .into_iter()
+                .enumerate()
+            {
+                let start = Params::load(&out).unwrap_or_default();
+                let mut on_step = |step: &vickey_sim::tune::Step, inc: &Params| {
+                    eprintln!(
+                        "[{prof}] iter {:>2} edge {:+.3} (t {:+.2}){}",
+                        step.iter,
+                        step.edge.mean,
+                        step.edge.t(),
+                        if step.accepted { " ACCEPTED" } else { "" }
+                    );
+                    if step.accepted {
+                        accepted[k] += 1;
+                        let _ = inc.save(&out);
+                    }
+                };
+                vickey_sim::tune::tune(
+                    parse_profile(prof),
+                    start,
+                    &model,
+                    &cfg,
+                    iters,
+                    matches,
+                    started ^ k as u64,
+                    &mut on_step,
+                );
+            }
+            std::fs::create_dir_all("runs")?;
+            let mut log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("runs/evolution.jsonl")?;
+            writeln!(
+                log,
+                "{}",
+                serde_json::json!({"ts": started, "field_matches": n, "accepted_multi": accepted[0], "accepted_duel": accepted[1]})
+            )?;
         }
         Cmd::Defaults => println!("{}", serde_json::to_string_pretty(&Params::default())?),
         Cmd::Tournament { entrants, n, seed } => {

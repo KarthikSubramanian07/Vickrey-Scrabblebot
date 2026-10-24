@@ -7,6 +7,7 @@
 pub mod agents;
 pub mod arena;
 pub mod engine;
+pub mod live;
 pub mod tournament;
 pub mod tune;
 
