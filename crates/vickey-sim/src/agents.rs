@@ -157,6 +157,8 @@ pub struct FieldStyle {
     pub smart_dump: bool,
     /// Bias towards letters that fit the rack (vowel/consonant balance).
     pub fit_bias: f64,
+    /// Multiplier on bids for premium letters (J, K, Q, X, Z).
+    pub premium_factor: f64,
 }
 
 pub struct FieldBot {
@@ -187,6 +189,20 @@ impl FieldBot {
                 min_len: 7,
                 smart_dump: true,
                 fit_bias: 0.6,
+                premium_factor: 1.0,
+            },
+            // Clone of the live league's top bot (postturing): wins ~15 letters a
+            // match at ~11.6 coins by bidding market rate on common letters and
+            // under half the market on premium ones, and cashes 5-6 letter
+            // words mid-match to keep coins flowing.
+            "volume" => FieldStyle {
+                aggression: 1.0,
+                noise: 0.25,
+                wealth_exp: 0.5,
+                min_len: 5,
+                smart_dump: true,
+                fit_bias: 0.5,
+                premium_factor: 0.55,
             },
             // Mid-table: plays 5+ letter words as they appear.
             "grinder" => FieldStyle {
@@ -196,6 +212,7 @@ impl FieldBot {
                 min_len: 5,
                 smart_dump: true,
                 fit_bias: 0.3,
+                premium_factor: 1.0,
             },
             // Overbidder that burns money early.
             "spender" => FieldStyle {
@@ -205,6 +222,7 @@ impl FieldBot {
                 min_len: 6,
                 smart_dump: false,
                 fit_bias: 0.2,
+                premium_factor: 1.0,
             },
             // Cautious, plays anything 4+.
             "nibbler" => FieldStyle {
@@ -214,6 +232,7 @@ impl FieldBot {
                 min_len: 4,
                 smart_dump: false,
                 fit_bias: 0.2,
+                premium_factor: 1.0,
             },
             _ => FieldStyle {
                 aggression: 1.0,
@@ -222,6 +241,7 @@ impl FieldBot {
                 min_len: 6,
                 smart_dump: true,
                 fit_bias: 0.4,
+                premium_factor: 1.0,
             },
         };
         FieldBot::new(kind, style, seed)

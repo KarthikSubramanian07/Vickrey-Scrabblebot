@@ -395,6 +395,8 @@ struct AuctionRec {
 struct MatchCtx {
     match_id: u64,
     me: u64,
+    /// A/B arm this match plays with (`A` = champion).
+    arm: String,
     kind_name: String,
     tracker: Tracker,
     brain: Brain,
@@ -1774,6 +1776,7 @@ impl Engine {
             words_played: ctx.words_played,
             resumed: ctx.resumed,
             tournament_id: ctx.tournament_id,
+            arm: ctx.arm.clone(),
         });
         info!(
             "m{match_id} ENDED: '{}' placed {place}/{} with {our_score} (winner {winner_score}); won {} letters for {}",
@@ -1782,6 +1785,17 @@ impl Engine {
             ctx.letters_won,
             ctx.spent
         );
+        // Live A/B: let the league decide between champion and challenger.
+        if self.opts.mode.is_live() {
+            let common = &self.opts.common;
+            if let Some(ab) = common.ab() {
+                if let Some(msg) =
+                    crate::ab::maybe_decide(&common.config_dir, &common.runs_dir, &ab)
+                {
+                    warn!("{msg}");
+                }
+            }
+        }
         self.autopilot();
     }
 
@@ -2057,7 +2071,23 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
     let ids: Vec<u64> = parts.iter().map(|p| p.bot_id).collect();
     let (kind, kind_name) = kind_of(&m.auction_type);
     let srs = m.starting_rack_size as usize;
-    let params = common.params();
+    let tournament_id = db
+        .tournament_match()
+        .iter()
+        .find(|t| t.match_id == m.id)
+        .map(|t| t.tournament_id);
+    let mut params = common.params();
+    let mut arm = "A".to_string();
+    // Live A/B: casual matches only; tournaments always get the champion.
+    if tournament_id.is_none() {
+        if let Some((p, label)) = common
+            .ab()
+            .and_then(|ab| crate::config::ab_params(&common.config_dir, &ab, m.id))
+        {
+            params = p;
+            arm = label;
+        }
+    }
     let duel = common.duel_params();
     let field = common.field();
     let duel_loaded = duel.is_some();
@@ -2110,14 +2140,10 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
         tracker.set_my_rack(derive_deal(cache_rack(db, m.id, me), mine, &won));
     }
 
-    let tournament_id = db
-        .tournament_match()
-        .iter()
-        .find(|t| t.match_id == m.id)
-        .map(|t| t.tournament_id);
     let mut ctx = MatchCtx {
         match_id: m.id,
         me,
+        arm: arm.clone(),
         kind_name: kind_name.to_string(),
         tracker,
         brain,
@@ -2206,6 +2232,7 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
             tournament_id,
             duel_loaded,
             duel_active,
+            arm,
             params: params_json,
         },
     );

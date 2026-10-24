@@ -46,6 +46,8 @@ pub enum MatchLine {
         duel_loaded: bool,
         /// The heads-up profile is in force (loaded and at most 2 players).
         duel_active: bool,
+        /// A/B arm: `A` (champion) or `B:<challenger file>`.
+        arm: String,
         params: serde_json::Value,
     },
     Auction {
@@ -133,6 +135,8 @@ pub struct SummaryLine {
     pub words_played: u32,
     pub resumed: bool,
     pub tournament_id: Option<u64>,
+    /// A/B arm: `A` (champion) or `B:<challenger file>`.
+    pub arm: String,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -311,6 +315,7 @@ mod tests {
             words_played: 1,
             resumed: false,
             tournament_id: None,
+            arm: "A".into(),
         };
         t.summary(&s);
         t.summary(&s);
