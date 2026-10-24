@@ -1,5 +1,5 @@
-ARENA := ./target/release/vickey-arena
-BOT   := ./target/release/vickey
+ARENA := ./target/release/vickrey-arena
+BOT   := ./target/release/vickrey
 
 .PHONY: build test lint bench duel firstprice tournament refit evolve run status ci
 
@@ -13,17 +13,17 @@ lint:             ## fmt + clippy, as CI runs them
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets -- -D warnings
 
-bench: build      ## Vickey vs the calibrated live field
-	$(ARENA) bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 200
+bench: build      ## Vickrey vs the calibrated live field
+	$(ARENA) bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 200
 
 duel: build       ## Heads-up, like the tournament final
-	$(ARENA) bench --lineup vickey,shark -n 40
+	$(ARENA) bench --lineup vickrey,shark -n 40
 
 firstprice: build ## First-price table
-	$(ARENA) --first-price bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 100
+	$(ARENA) --first-price bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 100
 
 tournament: build ## Whole simulated tournaments
-	$(ARENA) tournament --entrants vickey,shark,shark,shark,grinder,grinder,spender,nibbler,starter,shark,grinder,spender -n 10
+	$(ARENA) tournament --entrants vickrey,shark,shark,shark,grinder,grinder,spender,nibbler,starter,shark,grinder,spender -n 10
 
 refit: build      ## Refit the rivals' price model from live public data
 	$(ARENA) refit
@@ -38,4 +38,4 @@ status: build     ## Bot, rating, lobby and tournament status
 	$(BOT) status
 
 ci: lint test     ## Local CI
-	$(ARENA) bench --lineup vickey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0
+	$(ARENA) bench --lineup vickrey,shark,shark,grinder,spender,nibbler -n 36 --seed 7 --max-place 2.0

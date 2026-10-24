@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Build the release binary and (re)load the Vickey LaunchAgent for this user.
+# Build the release binary and (re)load the Vickrey LaunchAgent for this user.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LABEL="com.vickey.scrabblebot"
+LABEL="com.vickrey.scrabblebot"
 DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
-TOKEN="${VICKEY_TOKEN_FILE:-$HOME/.config/vickey/token}"
+TOKEN="${VICKREY_TOKEN_FILE:-$HOME/.config/vickrey/token}"
 
 if [[ ! -s "$TOKEN" ]]; then
-  echo "no bot token at $TOKEN; run: target/release/vickey setup --team <TEAM> --bot <BOT>" >&2
+  echo "no bot token at $TOKEN; run: target/release/vickrey setup --team <TEAM> --bot <BOT>" >&2
   exit 1
 fi
 
 echo "building release binary"
-(cd "$ROOT" && cargo build --release -p vickey-bot)
+(cd "$ROOT" && cargo build --release -p vickrey-bot)
 
 mkdir -p "$ROOT/runs" "$HOME/Library/LaunchAgents"
 sed -e "s#__REPO__#$ROOT#g" -e "s#__HOME__#$HOME#g" \
@@ -28,6 +28,6 @@ launchctl enable "$DOMAIN/$LABEL"
 launchctl kickstart -k "$DOMAIN/$LABEL"
 
 echo "loaded $LABEL"
-echo "  logs:      tail -f $ROOT/runs/vickey.err.log"
+echo "  logs:      tail -f $ROOT/runs/vickrey.err.log"
 echo "  heartbeat: cat $ROOT/runs/heartbeat"
 echo "  stop:      ops/uninstall-launchd.sh"

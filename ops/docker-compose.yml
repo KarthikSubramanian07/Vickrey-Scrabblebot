@@ -1,23 +1,23 @@
-# Run the Vickey autopilot in a container.
-#   cd ops && VICKEY_UID=$(id -u) VICKEY_GID=$(id -g) docker compose up -d --build
-# The token file (from `vickey setup`) is mounted read-only; telemetry and
+# Run the Vickrey autopilot in a container.
+#   cd ops && VICKREY_UID=$(id -u) VICKREY_GID=$(id -g) docker compose up -d --build
+# The token file (from `vickrey setup`) is mounted read-only; telemetry and
 # heartbeat land in ../runs, strategy config is read from ../config.
 services:
-  vickey:
+  vickrey:
     build:
       context: ..
       dockerfile: ops/Dockerfile
-    image: vickey-scrabblebot:latest
+    image: vickrey-scrabblebot:latest
     command: ["run"]
     restart: unless-stopped
     # Match the host user so the 0600 token and runs/ are readable/writable.
-    user: "${VICKEY_UID:-10001}:${VICKEY_GID:-10001}"
+    user: "${VICKREY_UID:-10001}:${VICKREY_GID:-10001}"
     environment:
       RUST_LOG: ${RUST_LOG:-info}
       STDB_HOST: ${STDB_HOST:-https://maincloud.spacetimedb.com}
       STDB_DB: ${STDB_DB:-scrabblebot}
     volumes:
-      - ${VICKEY_TOKEN_DIR:-~/.config/vickey}:/secrets:ro
+      - ${VICKREY_TOKEN_DIR:-~/.config/vickrey}:/secrets:ro
       - ../runs:/app/runs
       - ../config:/app/config:ro
     logging:

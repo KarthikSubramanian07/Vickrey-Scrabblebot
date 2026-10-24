@@ -2464,7 +2464,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vickey-bot"
+name = "vickrey-bot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2474,22 +2474,22 @@ dependencies = [
  "spacetimedb-sdk",
  "tracing",
  "tracing-subscriber",
- "vickey-brain",
- "vickey-core",
+ "vickrey-brain",
+ "vickrey-core",
 ]
 
 [[package]]
-name = "vickey-brain"
+name = "vickrey-brain"
 version = "0.1.0"
 dependencies = [
  "rand 0.8.8",
  "serde",
  "serde_json",
- "vickey-core",
+ "vickrey-core",
 ]
 
 [[package]]
-name = "vickey-core"
+name = "vickrey-core"
 version = "0.1.0"
 dependencies = [
  "rand 0.8.8",
@@ -2498,7 +2498,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "vickey-sim"
+name = "vickrey-sim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2508,8 +2508,8 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
- "vickey-brain",
- "vickey-core",
+ "vickrey-brain",
+ "vickrey-core",
 ]
 
 [[package]]
