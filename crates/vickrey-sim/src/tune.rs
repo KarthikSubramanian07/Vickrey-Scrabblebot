@@ -186,7 +186,7 @@ pub fn mutate(p: &Params, profile: Profile, rng: &mut SmallRng) -> Params {
         let lognorm =
             |x: f64, s: f64, rng: &mut SmallRng| x * (rng.gen_range(-1.0..1.0f64) * s).exp();
         let lin = |x: f64, s: f64, rng: &mut SmallRng| x + rng.gen_range(-1.0..1.0f64) * s;
-        match rng.gen_range(0..20) {
+        match rng.gen_range(0..22) {
             0 => q.income_factor = lin(q.income_factor, 0.4, rng).clamp(0.0, 3.0),
             1 => q.spend_target = lin(q.spend_target, 0.2, rng).clamp(0.5, 2.0),
             2 => q.choice_mult = lin(q.choice_mult, 0.4, rng).clamp(0.6, 3.5),
