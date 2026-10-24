@@ -39,7 +39,12 @@ pub struct BidDecision {
 }
 
 pub struct Brain {
+    /// Active parameters (switched by table size, see `sync_profile`).
     pub params: Params,
+    /// Parameters for tables of three or more.
+    pub multi: Params,
+    /// Optional parameters for heads-up tables (the tournament final).
+    pub duel: Option<Params>,
     pub market: Market,
     dict: &'static Dictionary,
     rng: SmallRng,
@@ -48,12 +53,18 @@ pub struct Brain {
     table_rack: Option<Rack>,
     table_at: u32,
     pub last_lambda: f64,
+    /// Our bid on the open auction, to read censored prices correctly.
+    last_bid: i64,
 }
 
 impl Brain {
     pub fn new(params: Params, field: FieldModel, seed: u64) -> Self {
+        // Pay one-time setup (dictionary index, letter prior) up front, not mid-auction.
+        let _ = letter_prior();
         Brain {
-            params,
+            params: params.clone(),
+            multi: params,
+            duel: None,
             market: Market::new(field),
             dict: dictionary(),
             rng: SmallRng::seed_from_u64(seed),
@@ -61,7 +72,30 @@ impl Brain {
             table_rack: None,
             table_at: 0,
             last_lambda: 0.3,
+            last_bid: 0,
         }
+    }
+
+    /// Use a dedicated parameter set at heads-up tables.
+    pub fn with_duel(mut self, duel: Option<Params>) -> Self {
+        self.duel = duel;
+        self
+    }
+
+    /// Pick the parameter profile for this table.
+    pub fn sync_profile(&mut self, t: &Tracker) {
+        let want = match (&self.duel, t.n_players() <= 2) {
+            (Some(d), true) => d,
+            _ => &self.multi,
+        };
+        if &self.params != want {
+            self.params = want.clone();
+        }
+    }
+
+    /// Latest per-letter marginal values used for pacing.
+    pub fn value_table(&self) -> [f64; ALPHABET] {
+        self.table
     }
 
     /// Forget per-match state.
@@ -148,6 +182,21 @@ impl Brain {
         letters: &[Letter],
         samples: usize,
     ) -> (f64, Vec<f64>) {
+        self.marginal_values_capped(t, rack, letters, samples, u64::MAX)
+    }
+
+    /// Like `marginal_values`, but stops sampling once `work` units are
+    /// spent. A unit is one letter² of terminal evaluation (greedy cost grows
+    /// roughly with the square of the rack), about 1.7 µs, so the budget is
+    /// deterministic yet tracks wall-clock time.
+    pub fn marginal_values_capped(
+        &mut self,
+        t: &Tracker,
+        rack: &Rack,
+        letters: &[Letter],
+        samples: usize,
+        work: u64,
+    ) -> (f64, Vec<f64>) {
         // The open auction's letter is already revealed, so it is not in `unseen`.
         let unseen = t.unseen();
         let k = self.future_size(t);
@@ -158,6 +207,8 @@ impl Brain {
         };
         let mut base = 0.0;
         let mut with = vec![0.0; letters.len()];
+        let mut used = 0u64;
+        let mut n = 0usize;
         for f in &futures {
             let mut r = *rack;
             r.plus(f);
@@ -165,8 +216,14 @@ impl Brain {
             for (j, &l) in letters.iter().enumerate() {
                 with[j] += self.terminal(&r.with(l));
             }
+            n += 1;
+            let len = r.len() as u64 + 1;
+            used += len * len * (letters.len() as u64 + 1);
+            if n >= 3 && used >= work {
+                break;
+            }
         }
-        let n = futures.len() as f64;
+        let n = n.max(1) as f64;
         (
             base / n,
             with.into_iter()
@@ -180,7 +237,13 @@ impl Brain {
         let mut best = 0.0f64;
         let rivals: Vec<Rack> = t.opponents().map(|p| p.known_rack()).collect();
         for r in rivals {
-            let (_, v) = self.marginal_values(t, &r, &[l], self.params.table_samples.max(4));
+            let (_, v) = self.marginal_values_capped(
+                t,
+                &r,
+                &[l],
+                self.params.table_samples.max(4),
+                self.params.work_budget / 4,
+            );
             best = best.max(v[0]);
         }
         best
@@ -192,9 +255,17 @@ impl Brain {
             return;
         }
         let all: Vec<Letter> = (0..ALPHABET).collect();
-        let (_, v) = self.marginal_values(t, &t.my_rack.clone(), &all, self.params.table_samples);
+        let (_, v) = self.marginal_values_capped(
+            t,
+            &t.my_rack.clone(),
+            &all,
+            self.params.table_samples,
+            self.params.work_budget,
+        );
+        let prior = letter_prior();
+        let w = self.params.table_shrink.clamp(0.0, 1.0);
         for (l, x) in v.into_iter().enumerate() {
-            self.table[l] = x;
+            self.table[l] = (1.0 - w) * x + w * prior[l];
         }
         self.table_rack = Some(t.my_rack);
         self.table_at = t.auctions_seen;
@@ -253,12 +324,25 @@ impl Brain {
 
     /// Decide our bid on the open auction for `letter`.
     pub fn bid(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
+        let d = self.bid_inner(t, letter);
+        self.last_bid = d.amount;
+        d
+    }
+
+    fn bid_inner(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
+        self.sync_profile(t);
         let balance = t.my_balance().max(0);
         if t.is_last_auction() || balance <= 0 {
             return BidDecision::default();
         }
         self.refresh_table(t);
-        let (_, v) = self.marginal_values(t, &t.my_rack.clone(), &[letter], self.params.samples);
+        let (_, v) = self.marginal_values_capped(
+            t,
+            &t.my_rack.clone(),
+            &[letter],
+            self.params.samples,
+            self.params.work_budget,
+        );
         let mut value = v[0];
         self.table[letter] = value;
         if self.params.deny_weight > 0.0 && t.n_players() <= self.params.deny_max_players {
@@ -321,6 +405,7 @@ impl Brain {
                 paid,
                 we_won,
                 t.n_players().saturating_sub(1),
+                self.last_bid,
             );
         }
     }
@@ -329,6 +414,7 @@ impl Brain {
 
     /// Words to play now, mid-match. Empty when holding is better.
     pub fn plays(&mut self, t: &Tracker) -> Vec<&'static str> {
+        self.sync_profile(t);
         if t.is_last_auction() {
             return self.final_plays(&t.my_rack);
         }
@@ -390,6 +476,36 @@ impl Brain {
     pub fn face(l: Letter) -> u32 {
         VALUE[l]
     }
+}
+
+/// Average marginal value of each letter over random mid-match racks
+/// (12 held + 8 to come), computed once per process. Used to shrink the
+/// noisy per-auction value table.
+pub fn letter_prior() -> &'static [f64; ALPHABET] {
+    static PRIOR: std::sync::OnceLock<[f64; ALPHABET]> = std::sync::OnceLock::new();
+    PRIOR.get_or_init(|| {
+        let d = dictionary();
+        let mut rng = SmallRng::seed_from_u64(0x5eed);
+        let pool: Vec<Letter> = (0..ALPHABET)
+            .flat_map(|l| std::iter::repeat(l).take(vickey_core::BAG[l] as usize))
+            .collect();
+        let mut sum = [0.0; ALPHABET];
+        let n = 160;
+        for _ in 0..n {
+            let mut buf = pool.clone();
+            let mut r = Rack::EMPTY;
+            for i in 0..20 {
+                let j = rng.gen_range(i..buf.len());
+                buf.swap(i, j);
+                r.add(buf[i]);
+            }
+            let base = vickey_core::solver::greedy(d, &r).score as f64;
+            for (l, slot) in sum.iter_mut().enumerate() {
+                *slot += (vickey_core::solver::greedy(d, &r.with(l)).score as f64 - base).max(0.0);
+            }
+        }
+        sum.map(|x| x / n as f64)
+    })
 }
 
 #[cfg(test)]

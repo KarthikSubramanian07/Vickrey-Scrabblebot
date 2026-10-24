@@ -12,6 +12,11 @@ pub struct Params {
     pub samples: usize,
     /// Futures for the cheap all-letters table used by pacing.
     pub table_samples: usize,
+    /// Blend of the static letter prior into the pacing table (0 = pure Monte Carlo).
+    pub table_shrink: f64,
+    /// Work cap per valuation (letter² units, ~1.7 µs each); bounds latency
+    /// on huge racks. The main valuation and the table each get this much.
+    pub work_budget: u64,
     /// Node budget per terminal solve inside the Monte Carlo (0 = greedy).
     pub solve_nodes: u64,
     /// Scales how many future letters we expect to win.
@@ -61,6 +66,8 @@ impl Default for Params {
         Params {
             samples: 48,
             table_samples: 10,
+            table_shrink: 0.5,
+            work_budget: 70_000,
             solve_nodes: 0,
             win_share_scale: 1.0,
             choice_mult: 1.6,

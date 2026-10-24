@@ -191,16 +191,28 @@ impl Market {
         paid: i64,
         we_won: bool,
         n_opponents: usize,
+        our_bid: i64,
     ) {
         if paid <= 1 {
             return;
         }
+        // We lost and the price was our own bid: the winner bid at least
+        // that much, but how much more is unknown (censored). Only learn
+        // from it when it says the table is hotter than we think.
+        let censored = !we_won && our_bid > 0 && paid >= our_bid;
         let pred = self.field.median[letter]
             * self.field.phase_factor(progress)
             * Self::table_factor(n_opponents, self.field.ref_players);
         // A second price sits below the opposing maximum; correct for it.
         let adj = if we_won { 1.0 } else { 1.0 / 0.8 };
-        let ratio = (paid as f64 * adj / pred).clamp(0.2, 5.0);
+        let mut ratio = (paid as f64 * adj / pred).clamp(0.2, 5.0);
+        if censored {
+            if ratio <= self.heat {
+                return;
+            }
+            // The true maximum is above `paid`; nudge past it.
+            ratio *= 1.15;
+        }
         self.obs += 1;
         let w = (1.0 / (self.obs as f64 + 3.0)).max(0.12);
         self.heat = (self.heat.ln() * (1.0 - w) + ratio.ln() * w).exp();
@@ -245,7 +257,7 @@ mod tests {
     fn heat_tracks_expensive_tables() {
         let mut m = Market::new(FieldModel::default());
         for _ in 0..20 {
-            m.observe(0, 0.5, 30, true, 5);
+            m.observe(0, 0.5, 30, true, 5, 0);
         }
         assert!(m.heat > 1.8);
     }

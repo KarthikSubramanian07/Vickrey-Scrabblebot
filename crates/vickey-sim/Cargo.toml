@@ -1,7 +1,24 @@
 [package]
 name = "vickey-sim"
+description = "Server-faithful ScrabbleBot match simulator, opponent archetypes, tournaments and the strategy tuner."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "vickey-arena"
+path = "src/main.rs"
 
 [dependencies]
+vickey-core.workspace = true
+vickey-brain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+rayon.workspace = true
+clap.workspace = true
+anyhow.workspace = true
