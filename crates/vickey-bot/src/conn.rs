@@ -62,11 +62,19 @@ pub fn connect(host: &str, db: &str, token: Option<String>, timeout: Duration) -
         .recv_timeout(timeout)
         .map_err(|_| anyhow!("timed out connecting to {db} at {host}"))?
         .map_err(|e| anyhow!("connection refused: {e}"))?;
-    Ok(Session { conn, identity, token })
+    Ok(Session {
+        conn,
+        identity,
+        token,
+    })
 }
 
 /// Subscribes to `queries` and blocks until the initial rows are in the cache.
-pub fn subscribe_wait(conn: &DbConnection, queries: &[String], timeout: Duration) -> Result<SubscriptionHandle> {
+pub fn subscribe_wait(
+    conn: &DbConnection,
+    queries: &[String],
+    timeout: Duration,
+) -> Result<SubscriptionHandle> {
     let (tx, rx) = mpsc::channel::<std::result::Result<(), String>>();
     let tx_err = tx.clone();
     let handle = conn
@@ -87,14 +95,17 @@ pub fn subscribe_wait(conn: &DbConnection, queries: &[String], timeout: Duration
 /// Calls a reducer through its `_then` variant and waits for the server's verdict.
 pub fn call_wait<F>(invoke: F, timeout: Duration) -> Result<std::result::Result<(), String>>
 where
-    F: FnOnce(Box<dyn FnOnce(&ReducerEventContext, ReducerOutcome) + Send>) -> spacetimedb_sdk::Result<()>,
+    F: FnOnce(
+        Box<dyn FnOnce(&ReducerEventContext, ReducerOutcome) + Send>,
+    ) -> spacetimedb_sdk::Result<()>,
 {
     let (tx, rx) = mpsc::channel();
     invoke(Box::new(move |_, outcome| {
         let _ = tx.send(flatten_outcome(outcome));
     }))
     .map_err(|e| anyhow!("could not send reducer call: {e}"))?;
-    rx.recv_timeout(timeout).map_err(|_| anyhow!("timed out waiting for reducer result"))
+    rx.recv_timeout(timeout)
+        .map_err(|_| anyhow!("timed out waiting for reducer result"))
 }
 
 /// Polls `cond` every 25 ms until it returns `Some` or `timeout` passes.
@@ -118,7 +129,10 @@ mod tests {
     #[test]
     fn outcomes_flatten() {
         assert_eq!(flatten_outcome(Ok(Ok(()))), Ok(()));
-        assert_eq!(flatten_outcome(Ok(Err("Auction closed".into()))), Err("Auction closed".into()));
+        assert_eq!(
+            flatten_outcome(Ok(Err("Auction closed".into()))),
+            Err("Auction closed".into())
+        );
     }
 
     #[test]

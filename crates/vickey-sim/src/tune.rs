@@ -24,7 +24,16 @@ pub enum Profile {
 /// Rivals drawn for multi-seat tables. `vickey@pop` seats run the incumbent's
 /// params: the live league's best bots are valuation-driven too, and the
 /// first live matches showed the scripted field alone is too soft.
-const FIELD_FILL: [&str; 8] = ["shark", "shark", "grinder", "spender", "nibbler", "starter", "vickey@pop", "vickey@pop"];
+const FIELD_FILL: [&str; 8] = [
+    "shark",
+    "shark",
+    "grinder",
+    "spender",
+    "nibbler",
+    "starter",
+    "vickey@pop",
+    "vickey@pop",
+];
 
 /// Mean and standard error of `cand − inc` per match.
 #[derive(Clone, Copy, Debug, Default, Serialize)]

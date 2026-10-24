@@ -25,7 +25,11 @@ use engine::{Engine, Mode, RunOpts, Shadow};
 use std::time::Duration;
 
 #[derive(Parser, Debug)]
-#[command(name = "vickey", version, about = "Vickey: an auction-savvy ScrabbleBot for SpacetimeDB")]
+#[command(
+    name = "vickey",
+    version,
+    about = "Vickey: an auction-savvy ScrabbleBot for SpacetimeDB"
+)]
 struct Cli {
     #[command(flatten)]
     common: Common,
@@ -98,7 +102,15 @@ fn main() {
 
 fn dispatch(cli: Cli) -> Result<()> {
     match cli.cmd {
-        Cmd::Run { no_lobby, no_tournaments, spectate, duration, max_reconnect_failures, slow_ms, fast_below_ms } => {
+        Cmd::Run {
+            no_lobby,
+            no_tournaments,
+            spectate,
+            duration,
+            max_reconnect_failures,
+            slow_ms,
+            fast_below_ms,
+        } => {
             let mode = spectate.map(Mode::Spectate).unwrap_or(Mode::Live);
             let stats = Engine::new(RunOpts {
                 common: cli.common,

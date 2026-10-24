@@ -8,7 +8,12 @@ use vickey_brain::{FieldModel, Params};
 #[derive(clap::Args, Clone, Debug)]
 pub struct Common {
     /// SpacetimeDB host.
-    #[arg(long, env = "STDB_HOST", default_value = "https://maincloud.spacetimedb.com", global = true)]
+    #[arg(
+        long,
+        env = "STDB_HOST",
+        default_value = "https://maincloud.spacetimedb.com",
+        global = true
+    )]
     pub host: String,
     /// Database name.
     #[arg(long, env = "STDB_DB", default_value = "scrabblebot", global = true)]
@@ -20,7 +25,12 @@ pub struct Common {
     #[arg(long, env = "VICKEY_RUNS_DIR", default_value = "runs", global = true)]
     pub runs_dir: PathBuf,
     /// Directory holding params.json / field.json (hot-reloaded each match).
-    #[arg(long, env = "VICKEY_CONFIG_DIR", default_value = "config", global = true)]
+    #[arg(
+        long,
+        env = "VICKEY_CONFIG_DIR",
+        default_value = "config",
+        global = true
+    )]
     pub config_dir: PathBuf,
 }
 
@@ -55,7 +65,9 @@ impl Common {
 }
 
 pub fn default_token_path() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     home.join(".config").join("vickey").join("token")
 }
 
@@ -91,7 +103,9 @@ pub fn save_token(path: &Path, token: &str) -> Result<()> {
             use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
-        let mut f = opts.open(&tmp).with_context(|| format!("writing {}", tmp.display()))?;
+        let mut f = opts
+            .open(&tmp)
+            .with_context(|| format!("writing {}", tmp.display()))?;
         f.write_all(token.trim().as_bytes())?;
         f.write_all(b"\n")?;
         f.sync_all()?;

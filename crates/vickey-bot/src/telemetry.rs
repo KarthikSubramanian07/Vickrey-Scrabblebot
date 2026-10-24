@@ -250,7 +250,12 @@ mod tests {
             rack: "AEI".into(),
             balance: 90,
             score: 0,
-            bid: Some(BidRec { amount: 5, value: 2.0, lambda: 0.4, p_win: 0.3 }),
+            bid: Some(BidRec {
+                amount: 5,
+                value: 2.0,
+                lambda: 0.4,
+                p_win: 0.3,
+            }),
             submitted: false,
             bid_error: None,
             decision_ms: 3.2,
@@ -271,7 +276,14 @@ mod tests {
         assert_eq!(v["bid"]["amount"], 5);
         assert_eq!(v["winner"], 4);
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
-        for k in ["letter", "bag_total", "decision_ms", "paid", "balance_after", "top_bid"] {
+        for k in [
+            "letter",
+            "bag_total",
+            "decision_ms",
+            "paid",
+            "balance_after",
+            "top_bid",
+        ] {
             assert!(keys.contains(&k), "missing {k}");
         }
     }

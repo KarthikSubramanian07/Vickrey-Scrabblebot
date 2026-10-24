@@ -97,6 +97,9 @@ enum Cmd {
         last: usize,
         #[arg(long, default_value = "config/params_duel.json")]
         duel_out: PathBuf,
+        /// Which profiles to tune: `multi`, `duel`, or `multi,duel`.
+        #[arg(long, default_value = "multi,duel")]
+        profiles: String,
     },
     /// Print the compiled-in default params as JSON.
     Defaults,
@@ -305,6 +308,7 @@ fn main() -> Result<()> {
             matches,
             last,
             duel_out,
+            profiles,
         } => {
             use std::io::Write;
             let started = std::time::SystemTime::now()
@@ -322,6 +326,9 @@ fn main() -> Result<()> {
                 .into_iter()
                 .enumerate()
             {
+                if !profiles.split(',').any(|p| p.trim() == prof) {
+                    continue;
+                }
                 let start = Params::load(&out).unwrap_or_default();
                 let mut on_step = |step: &vickey_sim::tune::Step, inc: &Params| {
                     eprintln!(

@@ -17,6 +17,8 @@
     <string>10</string>
     <string>--matches</string>
     <string>32</string>
+    <string>--profiles</string>
+    <string>__PROFILES__</string>
   </array>
   <key>WorkingDirectory</key>
   <string>__REPO__</string>

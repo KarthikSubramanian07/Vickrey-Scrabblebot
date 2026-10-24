@@ -44,16 +44,30 @@ pub fn status(common: &Common) -> Result<()> {
     .collect();
     subscribe_wait(&s.conn, &queries, Duration::from_secs(30))?;
     let db = &s.conn.db;
-    let name = |id: u64| db.bot().id().find(&id).map(|b| b.name).unwrap_or_else(|| format!("#{id}"));
+    let name = |id: u64| {
+        db.bot()
+            .id()
+            .find(&id)
+            .map(|b| b.name)
+            .unwrap_or_else(|| format!("#{id}"))
+    };
 
     println!("server     {} / {}", common.host, common.db);
     println!(
         "identity   {}{}",
         s.identity.to_hex(),
-        if anonymous { "  (anonymous: no bot token found)" } else { "" }
+        if anonymous {
+            "  (anonymous: no bot token found)"
+        } else {
+            ""
+        }
     );
 
-    let me = db.bot_credential().identity().find(&s.identity).map(|c| c.bot_id);
+    let me = db
+        .bot_credential()
+        .identity()
+        .find(&s.identity)
+        .map(|c| c.bot_id);
     match me {
         Some(id) => {
             println!("bot        {} (id {id})", name(id));
@@ -68,7 +82,12 @@ pub fn status(common: &Common) -> Result<()> {
                 .match_participant()
                 .iter()
                 .filter(|p| p.bot_id == id)
-                .filter(|p| db.match_state().id().find(&p.match_id).is_some_and(|m| matches!(m.status, MatchStatus::Running)))
+                .filter(|p| {
+                    db.match_state()
+                        .id()
+                        .find(&p.match_id)
+                        .is_some_and(|m| matches!(m.status, MatchStatus::Running))
+                })
                 .map(|p| p.match_id)
                 .collect();
             if running.is_empty() {
@@ -82,10 +101,23 @@ pub fn status(common: &Common) -> Result<()> {
     }
 
     let real_bots = db.bot().iter().filter(|b| !b.is_simulated).count();
-    let running = db.match_state().iter().filter(|m| matches!(m.status, MatchStatus::Running)).count();
-    println!("server     {} real bots registered, {running} matches running, {} played", real_bots, db.match_state().count());
+    let running = db
+        .match_state()
+        .iter()
+        .filter(|m| matches!(m.status, MatchStatus::Running))
+        .count();
+    println!(
+        "server     {} real bots registered, {running} matches running, {} played",
+        real_bots,
+        db.match_state().count()
+    );
 
-    match db.lobby().iter().filter(|l| matches!(l.status, LobbyStatus::Open)).max_by_key(|l| l.id) {
+    match db
+        .lobby()
+        .iter()
+        .filter(|l| matches!(l.status, LobbyStatus::Open))
+        .max_by_key(|l| l.id)
+    {
         Some(l) => {
             let mut members: Vec<String> = db
                 .lobby_member()
@@ -103,7 +135,11 @@ pub fn status(common: &Common) -> Result<()> {
                 members.len(),
                 l.max_size,
                 secs_until(l.closes_at).max(0),
-                if members.is_empty() { "(empty)".to_string() } else { members.join(", ") }
+                if members.is_empty() {
+                    "(empty)".to_string()
+                } else {
+                    members.join(", ")
+                }
             );
         }
         None => println!("lobby      none open"),
@@ -115,7 +151,11 @@ pub fn status(common: &Common) -> Result<()> {
         println!("tournament none");
     }
     for t in tours {
-        let entries: Vec<TournamentEntry> = db.tournament_entry().iter().filter(|e| e.tournament_id == t.id).collect();
+        let entries: Vec<TournamentEntry> = db
+            .tournament_entry()
+            .iter()
+            .filter(|e| e.tournament_id == t.id)
+            .collect();
         let registered = me.is_some_and(|id| entries.iter().any(|e| e.bot_id == id));
         println!(
             "tournament #{} {} | {} entrants | {} {}-bot matches, {} swiss rounds (round {}), top {} | {}{}",

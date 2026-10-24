@@ -303,7 +303,10 @@ impl Brain {
     fn solve_lambda(&self, mix: &[(f64, f64, BidDist)], n: f64, cap: f64, budget: f64) -> f64 {
         let p = &self.params;
         let spend = |lam: f64| -> f64 {
-            mix.iter().map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap))).sum::<f64>() * n
+            mix.iter()
+                .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap)))
+                .sum::<f64>()
+                * n
         };
         let (lo, hi) = (p.lambda_min, p.lambda_max);
         if spend(lo) <= budget {
@@ -327,7 +330,10 @@ impl Brain {
 
     /// Expected points bought over `n` auctions at shadow price `lam` with bids capped at `cap`.
     fn expected_points(mix: &[(f64, f64, BidDist)], n: f64, lam: f64, cap: f64) -> f64 {
-        mix.iter().map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap))).sum::<f64>() * n
+        mix.iter()
+            .map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap)))
+            .sum::<f64>()
+            * n
     }
 
     /// Auctions still to come whose letters we can use, including the open one.
@@ -339,7 +345,12 @@ impl Brain {
     fn pace(&mut self, t: &Tracker) -> f64 {
         let balance = t.my_balance().max(0) as f64;
         let mix = self.letter_mix(t);
-        self.solve_lambda(&mix, Self::usable_now(t), balance, self.budget_for(t, balance))
+        self.solve_lambda(
+            &mix,
+            Self::usable_now(t),
+            balance,
+            self.budget_for(t, balance),
+        )
     }
 
     /// Marginal points from one more coin right now (μ). Unlike the pacing
@@ -458,10 +469,18 @@ impl Brain {
         if t.is_last_auction() {
             return self.final_plays(&t.my_rack);
         }
-        if self.dict.candidates(&t.my_rack, self.params.min_play_len).is_empty() {
+        if self
+            .dict
+            .candidates(&t.my_rack, self.params.min_play_len)
+            .is_empty()
+        {
             return Vec::new();
         }
-        let mu = if self.params.mu_liquidity { self.money_value(t) } else { self.last_lambda };
+        let mu = if self.params.mu_liquidity {
+            self.money_value(t)
+        } else {
+            self.last_lambda
+        };
         let p = self.params.clone();
         let mut rack = t.my_rack;
         let mut out = Vec::new();
@@ -495,9 +514,7 @@ impl Brain {
                 let s = self.dict.sig(i);
                 let mut rest = rack;
                 rest.sub(&s.rack);
-                let gain = s.reward as f64 * (1.0 + p.liquidity * mu)
-                    + eval(self, &rest)
-                    - hold;
+                let gain = s.reward as f64 * (1.0 + p.liquidity * mu) + eval(self, &rest) - hold;
                 if gain > p.play_margin && best.is_none_or(|(g, _)| gain > g) {
                     best = Some((gain, i));
                 }

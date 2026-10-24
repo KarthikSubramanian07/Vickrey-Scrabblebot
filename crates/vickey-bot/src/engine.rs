@@ -26,15 +26,17 @@
 use crate::config::Common;
 use crate::conn::flatten_outcome;
 use crate::helpers::{
-    derive_deal, feed_tracker, letter_of, now_ms, order_history, percentile, place_of, rack_from_rows, rack_minus,
-    HistItem,
+    derive_deal, feed_tracker, letter_of, now_ms, order_history, percentile, place_of,
+    rack_from_rows, rack_minus, HistItem,
 };
 use crate::module_bindings::*;
 use crate::telemetry::{
     BidRec, Heartbeat, MatchLine, PlayerRec, SummaryLine, Telemetry, SCHEMA_VERSION,
 };
 use anyhow::{bail, Result};
-use spacetimedb_sdk::{DbContext, Event, Identity, SubscriptionHandle as _, Table, TableWithPrimaryKey};
+use spacetimedb_sdk::{
+    DbContext, Event, Identity, SubscriptionHandle as _, Table, TableWithPrimaryKey,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -56,7 +58,9 @@ impl std::str::FromStr for Shadow {
         if s.eq_ignore_ascii_case("all") {
             return Ok(Shadow::All);
         }
-        s.parse::<u64>().map(Shadow::Bot).map_err(|_| format!("expected a bot id or 'all', got '{s}'"))
+        s.parse::<u64>()
+            .map(Shadow::Bot)
+            .map_err(|_| format!("expected a bot id or 'all', got '{s}'"))
     }
 }
 
@@ -102,17 +106,52 @@ enum Ev {
     Ready,
     FloorApplied,
     SubError(String),
-    AuctionOpen { auction_id: u64, match_id: u64, letter: String, bag_total: Option<u32>, closes_at_us: i64 },
-    AuctionResult { auction_id: u64, match_id: u64, letter: String, winner: Option<u64>, paid: i64 },
-    Word { id: u64, match_id: u64, bot_id: u64, word: String },
-    Participant { match_id: u64, bot_id: u64, balance: i64, score: i64 },
-    MatchUpdate { match_id: u64, ended: bool },
-    Rack { match_id: u64 },
+    AuctionOpen {
+        auction_id: u64,
+        match_id: u64,
+        letter: String,
+        bag_total: Option<u32>,
+        closes_at_us: i64,
+    },
+    AuctionResult {
+        auction_id: u64,
+        match_id: u64,
+        letter: String,
+        winner: Option<u64>,
+        paid: i64,
+    },
+    Word {
+        id: u64,
+        match_id: u64,
+        bot_id: u64,
+        word: String,
+    },
+    Participant {
+        match_id: u64,
+        bot_id: u64,
+        balance: i64,
+        score: i64,
+    },
+    MatchUpdate {
+        match_id: u64,
+        ended: bool,
+    },
+    Rack {
+        match_id: u64,
+    },
     Poke,
     WordDone(WordDone),
-    BidDone { match_id: u64, auction_id: u64, amount: i64, result: std::result::Result<(), String> },
+    BidDone {
+        match_id: u64,
+        auction_id: u64,
+        amount: i64,
+        result: std::result::Result<(), String>,
+    },
     JoinDone(std::result::Result<(), String>),
-    RegisterDone { tournament_id: u64, result: std::result::Result<(), String> },
+    RegisterDone {
+        tournament_id: u64,
+        result: std::result::Result<(), String>,
+    },
 }
 
 struct WordDone {
@@ -132,7 +171,10 @@ struct Msg {
 /// Rows applied while a subscription lands are the initial snapshot, not
 /// news; the worker rebuilds from the cache instead.
 fn is_news(ctx: &EventContext) -> bool {
-    !matches!(ctx.event, Event::SubscribeApplied | Event::UnsubscribeApplied)
+    !matches!(
+        ctx.event,
+        Event::SubscribeApplied | Event::UnsubscribeApplied
+    )
 }
 
 fn register_callbacks(conn: &DbConnection, tx: &Sender<Msg>, gen: u64) {
@@ -147,7 +189,12 @@ fn register_callbacks(conn: &DbConnection, tx: &Sender<Msg>, gen: u64) {
         }
         // The cache is post-transaction here, so this is exactly the bag
         // count the server left after drawing this auction's letter.
-        let bag_total = ctx.db.match_state().id().find(&a.match_id).map(|m| m.bag_total);
+        let bag_total = ctx
+            .db
+            .match_state()
+            .id()
+            .find(&a.match_id)
+            .map(|m| m.bag_total);
         send(
             &t,
             Ev::AuctionOpen {
@@ -179,14 +226,27 @@ fn register_callbacks(conn: &DbConnection, tx: &Sender<Msg>, gen: u64) {
     let t = tx.clone();
     conn.db.word_play().on_insert(move |ctx, w| {
         if is_news(ctx) {
-            send(&t, Ev::Word { id: w.id, match_id: w.match_id, bot_id: w.bot_id, word: w.word.clone() });
+            send(
+                &t,
+                Ev::Word {
+                    id: w.id,
+                    match_id: w.match_id,
+                    bot_id: w.bot_id,
+                    word: w.word.clone(),
+                },
+            );
         }
     });
 
     let participant = move |t: &Sender<Msg>, p: &MatchParticipant| {
         let _ = t.send(Msg {
             gen,
-            ev: Ev::Participant { match_id: p.match_id, bot_id: p.bot_id, balance: p.balance, score: p.score },
+            ev: Ev::Participant {
+                match_id: p.match_id,
+                bot_id: p.bot_id,
+                balance: p.balance,
+                score: p.score,
+            },
         });
     };
     let t = tx.clone();
@@ -205,32 +265,59 @@ fn register_callbacks(conn: &DbConnection, tx: &Sender<Msg>, gen: u64) {
     let t = tx.clone();
     conn.db.match_state().on_insert(move |ctx, m| {
         if is_news(ctx) {
-            send(&t, Ev::MatchUpdate { match_id: m.id, ended: matches!(m.status, MatchStatus::Ended) });
+            send(
+                &t,
+                Ev::MatchUpdate {
+                    match_id: m.id,
+                    ended: matches!(m.status, MatchStatus::Ended),
+                },
+            );
         }
     });
     let t = tx.clone();
     conn.db.match_state().on_update(move |ctx, old, m| {
         if is_news(ctx) && old.status != m.status {
-            send(&t, Ev::MatchUpdate { match_id: m.id, ended: matches!(m.status, MatchStatus::Ended) });
+            send(
+                &t,
+                Ev::MatchUpdate {
+                    match_id: m.id,
+                    ended: matches!(m.status, MatchStatus::Ended),
+                },
+            );
         }
     });
 
     let t = tx.clone();
     conn.db.my_rack().on_insert(move |ctx, h| {
         if is_news(ctx) {
-            send(&t, Ev::Rack { match_id: h.match_id });
+            send(
+                &t,
+                Ev::Rack {
+                    match_id: h.match_id,
+                },
+            );
         }
     });
     let t = tx.clone();
     conn.db.my_rack().on_update(move |ctx, _, h| {
         if is_news(ctx) {
-            send(&t, Ev::Rack { match_id: h.match_id });
+            send(
+                &t,
+                Ev::Rack {
+                    match_id: h.match_id,
+                },
+            );
         }
     });
     let t = tx.clone();
     conn.db.my_rack().on_delete(move |ctx, h| {
         if is_news(ctx) {
-            send(&t, Ev::Rack { match_id: h.match_id });
+            send(
+                &t,
+                Ev::Rack {
+                    match_id: h.match_id,
+                },
+            );
         }
     });
 
@@ -344,18 +431,30 @@ fn kind_of(t: &AuctionType) -> (AuctionKind, &'static str) {
 }
 
 fn participants(db: &RemoteTables, match_id: u64) -> Vec<MatchParticipant> {
-    let mut v: Vec<MatchParticipant> = db.match_participant().iter().filter(|p| p.match_id == match_id).collect();
+    let mut v: Vec<MatchParticipant> = db
+        .match_participant()
+        .iter()
+        .filter(|p| p.match_id == match_id)
+        .collect();
     v.sort_by_key(|p| p.id);
     v
 }
 
 fn cache_rack(db: &RemoteTables, match_id: u64, me: u64) -> Rack {
-    let rows: Vec<Holding> = db.my_rack().iter().filter(|h| h.match_id == match_id && h.bot_id == me).collect();
+    let rows: Vec<Holding> = db
+        .my_rack()
+        .iter()
+        .filter(|h| h.match_id == match_id && h.bot_id == me)
+        .collect();
     rack_from_rows(rows.iter().map(|h| (h.letter.as_str(), h.count)))
 }
 
 fn bot_name(db: &RemoteTables, id: u64) -> String {
-    db.bot().id().find(&id).map(|b| b.name).unwrap_or_else(|| format!("#{id}"))
+    db.bot()
+        .id()
+        .find(&id)
+        .map(|b| b.name)
+        .unwrap_or_else(|| format!("#{id}"))
 }
 
 impl MatchCtx {
@@ -369,7 +468,11 @@ impl MatchCtx {
         });
         let pend_reward: i64 = self.pending.iter().map(|p| p.reward).sum();
         for p in participants(db, self.match_id) {
-            let (bal, score) = if p.bot_id == self.me { (p.balance + pend_reward, p.score + pend_reward) } else { (p.balance, p.score) };
+            let (bal, score) = if p.bot_id == self.me {
+                (p.balance + pend_reward, p.score + pend_reward)
+            } else {
+                (p.balance, p.score)
+            };
             self.tracker.on_participant(p.bot_id, bal, score);
         }
         let rack = if env.mode.is_live() {
@@ -394,7 +497,14 @@ impl MatchCtx {
 
     /// Feed a closed auction, once. Writes the auction's telemetry line if
     /// we made a decision on it.
-    fn apply_result(&mut self, env: &Env, auction_id: u64, letter: &str, winner: Option<u64>, paid: i64) {
+    fn apply_result(
+        &mut self,
+        env: &Env,
+        auction_id: u64,
+        letter: &str,
+        winner: Option<u64>,
+        paid: i64,
+    ) {
         if auction_id <= self.last_result {
             return;
         }
@@ -407,12 +517,22 @@ impl MatchCtx {
             self.letters_won += 1;
             self.spent += paid;
         }
-        if self.open.as_ref().is_some_and(|o| o.auction_id == auction_id) {
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|o| o.auction_id == auction_id)
+        {
             self.open = None;
         }
-        let Some(rec) = self.recs.remove(&auction_id) else { return };
+        let Some(rec) = self.recs.remove(&auction_id) else {
+            return;
+        };
         let db = &env.conn.db;
-        let top_bid = db.visible_auction_top_bids().auction_id().find(&auction_id).map(|t| t.top_bid);
+        let top_bid = db
+            .visible_auction_top_bids()
+            .auction_id()
+            .find(&auction_id)
+            .map(|t| t.top_bid);
         let balance_after = participants(db, self.match_id)
             .iter()
             .find(|p| p.bot_id == self.me)
@@ -453,9 +573,15 @@ impl MatchCtx {
             },
         );
         if we_won && env.mode.is_live() {
-            info!("m{} WON '{}' for {} (bid {})", self.match_id, letter, paid, our_bid);
+            info!(
+                "m{} WON '{}' for {} (bid {})",
+                self.match_id, letter, paid, our_bid
+            );
         } else if we_won {
-            info!("m{} shadow won '{}' for {} (our bid would be {})", self.match_id, letter, paid, our_bid);
+            info!(
+                "m{} shadow won '{}' for {} (our bid would be {})",
+                self.match_id, letter, paid, our_bid
+            );
         }
     }
 
@@ -474,7 +600,13 @@ impl MatchCtx {
     /// open but its callback fires later; take it from the cache now.
     fn barrier(&mut self, env: &Env) {
         if self.last_open > self.last_result {
-            if let Some(r) = env.conn.db.auction_result().auction_id().find(&self.last_open) {
+            if let Some(r) = env
+                .conn
+                .db
+                .auction_result()
+                .auction_id()
+                .find(&self.last_open)
+            {
                 self.apply_result(env, r.auction_id, &r.letter, r.winner_bot_id, r.paid);
             }
         }
@@ -482,7 +614,11 @@ impl MatchCtx {
 
     fn submit_word(&mut self, env: &Env, auction_id: u64, word: &str, phase: &'static str) {
         let reward = word_reward(word) as i64;
-        self.pending.push(PendingWord { word: word.to_string(), rack: Rack::from_word(word), reward });
+        self.pending.push(PendingWord {
+            word: word.to_string(),
+            rack: Rack::from_word(word),
+            reward,
+        });
         if !env.mode.is_live() {
             return;
         }
@@ -490,12 +626,22 @@ impl MatchCtx {
         let gen = env.gen;
         let (match_id, w) = (self.match_id, word.to_string());
         let sent = Instant::now();
-        let res = env.conn.reducers.submit_word_then(self.match_id, word.to_string(), move |_, o| {
-            let _ = tx.send(Msg {
-                gen,
-                ev: Ev::WordDone(WordDone { match_id, auction_id, word: w, phase, sent, result: flatten_outcome(o) }),
-            });
-        });
+        let res =
+            env.conn
+                .reducers
+                .submit_word_then(self.match_id, word.to_string(), move |_, o| {
+                    let _ = tx.send(Msg {
+                        gen,
+                        ev: Ev::WordDone(WordDone {
+                            match_id,
+                            auction_id,
+                            word: w,
+                            phase,
+                            sent,
+                            result: flatten_outcome(o),
+                        }),
+                    });
+                });
         if let Err(e) = res {
             warn!("m{} could not send word {word}: {e}", self.match_id);
             self.pending.retain(|p| p.word != word);
@@ -514,10 +660,17 @@ impl MatchCtx {
         if !self.pending.is_empty() {
             return;
         }
-        let Some(open) = self.open.as_ref() else { return };
+        let Some(open) = self.open.as_ref() else {
+            return;
+        };
         let (auction_id, l, closes_at_ms) = (open.auction_id, open.letter, open.closes_at_ms);
-        let Some(rec) = self.recs.get(&auction_id) else { return };
-        if rec.bag_total == 0 || rec.rack == self.tracker.my_rack.to_string() || closes_at_ms - now_ms() < 300 {
+        let Some(rec) = self.recs.get(&auction_id) else {
+            return;
+        };
+        if rec.bag_total == 0
+            || rec.rack == self.tracker.my_rack.to_string()
+            || closes_at_ms - now_ms() < 300
+        {
             return;
         }
         let old = rec.bid.as_ref().map(|b| b.amount).unwrap_or(0);
@@ -525,10 +678,19 @@ impl MatchCtx {
         let d = self.brain.bid(&self.tracker, l);
         let amount = d.amount.min(self.tracker.my_balance()).max(0);
         let rack = self.tracker.my_rack.to_string();
-        info!("m{} rack changed to {rack} mid-auction: rebid {old} -> {amount} ({:.1} ms)", self.match_id, ms(t));
+        info!(
+            "m{} rack changed to {rack} mid-auction: rebid {old} -> {amount} ({:.1} ms)",
+            self.match_id,
+            ms(t)
+        );
         if let Some(rec) = self.recs.get_mut(&auction_id) {
             rec.rack = rack;
-            rec.bid = Some(BidRec { amount, value: d.value, lambda: d.lambda, p_win: d.p_win });
+            rec.bid = Some(BidRec {
+                amount,
+                value: d.value,
+                lambda: d.lambda,
+                p_win: d.p_win,
+            });
             rec.rebid = true;
         }
         if amount != old {
@@ -536,9 +698,20 @@ impl MatchCtx {
             let (gen, match_id) = (env.gen, self.match_id);
             // A zero bid can't withdraw a sealed bid, so keep a token 1 instead.
             let send = amount.max(1);
-            let _ = env.conn.reducers.submit_bid_then(auction_id, send, move |_, o| {
-                let _ = tx.send(Msg { gen, ev: Ev::BidDone { match_id, auction_id, amount: send, result: flatten_outcome(o) } });
-            });
+            let _ = env
+                .conn
+                .reducers
+                .submit_bid_then(auction_id, send, move |_, o| {
+                    let _ = tx.send(Msg {
+                        gen,
+                        ev: Ev::BidDone {
+                            match_id,
+                            auction_id,
+                            amount: send,
+                            result: flatten_outcome(o),
+                        },
+                    });
+                });
             if let Some(rec) = self.recs.get_mut(&auction_id) {
                 rec.submitted = true;
             }
@@ -550,7 +723,9 @@ impl MatchCtx {
         if a.id <= self.last_open {
             return;
         }
-        let Some(l) = letter_of(&a.letter) else { return };
+        let Some(l) = letter_of(&a.letter) else {
+            return;
+        };
         self.barrier(env);
         let started = Instant::now();
         self.last_open = a.id;
@@ -558,7 +733,13 @@ impl MatchCtx {
         self.refresh(env);
         let seq = self.tracker.auctions_seen;
         // Already closed (we caught up late): track it, but don't act.
-        let stale = env.conn.db.auction().id().find(&a.id).is_some_and(|x| !matches!(x.status, AuctionStatus::Open));
+        let stale = env
+            .conn
+            .db
+            .auction()
+            .id()
+            .find(&a.id)
+            .is_some_and(|x| !matches!(x.status, AuctionStatus::Open));
         let mut rec = AuctionRec {
             seq,
             letter: a.letter.clone(),
@@ -606,7 +787,11 @@ impl MatchCtx {
             // `bid` re-selects its profile (multi/duel) on entry, so every
             // profile is scaled, then restored.
             let saved = (left < env.fast_below_ms).then(|| {
-                let saved = (self.brain.params.clone(), self.brain.multi.clone(), self.brain.duel.clone());
+                let saved = (
+                    self.brain.params.clone(),
+                    self.brain.multi.clone(),
+                    self.brain.duel.clone(),
+                );
                 let shrink = |p: &mut vickey_brain::Params| {
                     p.samples = (p.samples / 4).max(4);
                     p.table_samples = (p.table_samples / 4).max(2);
@@ -626,19 +811,35 @@ impl MatchCtx {
                 self.brain.multi = multi;
                 self.brain.duel = duel;
                 rec.fast = true;
-                info!("m{} late start ({left} ms left): valued with reduced samples", self.match_id);
+                info!(
+                    "m{} late start ({left} ms left): valued with reduced samples",
+                    self.match_id
+                );
             }
             amount = d.amount.min(self.tracker.my_balance()).max(0);
-            rec.bid = Some(BidRec { amount, value: d.value, lambda: d.lambda, p_win: d.p_win });
+            rec.bid = Some(BidRec {
+                amount,
+                value: d.value,
+                lambda: d.lambda,
+                p_win: d.p_win,
+            });
             if amount > 0 && env.mode.is_live() && !stale {
                 let tx = env.tx.clone();
                 let (gen, match_id, auction_id) = (env.gen, self.match_id, a.id);
-                match env.conn.reducers.submit_bid_then(a.id, amount, move |_, o| {
-                    let _ = tx.send(Msg {
-                        gen,
-                        ev: Ev::BidDone { match_id, auction_id, amount, result: flatten_outcome(o) },
-                    });
-                }) {
+                match env
+                    .conn
+                    .reducers
+                    .submit_bid_then(a.id, amount, move |_, o| {
+                        let _ = tx.send(Msg {
+                            gen,
+                            ev: Ev::BidDone {
+                                match_id,
+                                auction_id,
+                                amount,
+                                result: flatten_outcome(o),
+                            },
+                        });
+                    }) {
                     Ok(()) => rec.submitted = true,
                     Err(e) => rec.bid_error = Some(format!("send failed: {e}")),
                 }
@@ -648,7 +849,10 @@ impl MatchCtx {
         rec.ms_left = Some(a.closes_at.to_micros_since_unix_epoch() / 1000 - now_ms());
         lat.push(rec.decision_ms);
         if rec.decision_ms > env.slow_ms {
-            warn!("m{} decision took {:.0} ms (> {:.0} ms budget)", self.match_id, rec.decision_ms, env.slow_ms);
+            warn!(
+                "m{} decision took {:.0} ms (> {:.0} ms budget)",
+                self.match_id, rec.decision_ms, env.slow_ms
+            );
         }
         if bag_total > 0 {
             let b = rec.bid.clone().unwrap_or_default();
@@ -783,8 +987,16 @@ impl Engine {
             "mode {} | runs dir {} | lobby {} | tournaments {}",
             self.opts.mode.name(),
             self.tel.root().display(),
-            if self.opts.no_lobby || !self.opts.mode.is_live() { "off" } else { "auto" },
-            if self.opts.no_tournaments || !self.opts.mode.is_live() { "off" } else { "auto" },
+            if self.opts.no_lobby || !self.opts.mode.is_live() {
+                "off"
+            } else {
+                "auto"
+            },
+            if self.opts.no_tournaments || !self.opts.mode.is_live() {
+                "off"
+            } else {
+                "auto"
+            },
         );
         self.connect();
         loop {
@@ -810,7 +1022,10 @@ impl Engine {
             let _ = c.disconnect();
         }
         self.write_heartbeat("stopped");
-        Ok(RunStats { latencies_ms: self.lat, matches_finished: self.matches_finished })
+        Ok(RunStats {
+            latencies_ms: self.lat,
+            matches_finished: self.matches_finished,
+        })
     }
 
     // ------------------------------------------------------- connection
@@ -835,20 +1050,38 @@ impl Engine {
         } else {
             None // spectators connect anonymously so the top-bid view is visible
         };
-        info!("connecting to {} / {} ({})", c.host, c.db, if token.is_some() { "bot token" } else { "anonymous" });
+        info!(
+            "connecting to {} / {} ({})",
+            c.host,
+            c.db,
+            if token.is_some() {
+                "bot token"
+            } else {
+                "anonymous"
+            }
+        );
         let (t1, t2, t3) = (self.tx.clone(), self.tx.clone(), self.tx.clone());
         let built = DbConnection::builder()
             .with_uri(c.host.as_str())
             .with_database_name(c.db.clone())
             .with_token(token)
             .on_connect(move |_, identity, _| {
-                let _ = t1.send(Msg { gen, ev: Ev::Connected(identity) });
+                let _ = t1.send(Msg {
+                    gen,
+                    ev: Ev::Connected(identity),
+                });
             })
             .on_connect_error(move |_, e| {
-                let _ = t2.send(Msg { gen, ev: Ev::ConnectFailed(e.to_string()) });
+                let _ = t2.send(Msg {
+                    gen,
+                    ev: Ev::ConnectFailed(e.to_string()),
+                });
             })
             .on_disconnect(move |_, e| {
-                let _ = t3.send(Msg { gen, ev: Ev::Disconnected(e.map(|e| e.to_string())) });
+                let _ = t3.send(Msg {
+                    gen,
+                    ev: Ev::Disconnected(e.map(|e| e.to_string())),
+                });
             })
             .build();
         let conn = match built {
@@ -882,10 +1115,16 @@ impl Engine {
         let (ta, tb) = (self.tx.clone(), self.tx.clone());
         conn.subscription_builder()
             .on_applied(move |_| {
-                let _ = ta.send(Msg { gen, ev: Ev::Phase1 });
+                let _ = ta.send(Msg {
+                    gen,
+                    ev: Ev::Phase1,
+                });
             })
             .on_error(move |_, e| {
-                let _ = tb.send(Msg { gen, ev: Ev::SubError(e.to_string()) });
+                let _ = tb.send(Msg {
+                    gen,
+                    ev: Ev::SubError(e.to_string()),
+                });
             })
             .subscribe(q);
         self.conn = Some(conn);
@@ -901,7 +1140,11 @@ impl Engine {
         self.state = ConnState::Down;
         self.failures += 1;
         let backoff = Duration::from_secs((1u64 << self.failures.min(5)).min(30));
-        warn!("{why}; reconnecting in {}s (attempt {})", backoff.as_secs(), self.failures);
+        warn!(
+            "{why}; reconnecting in {}s (attempt {})",
+            backoff.as_secs(),
+            self.failures
+        );
         self.reconnect_at = Instant::now() + backoff;
     }
 
@@ -941,7 +1184,10 @@ impl Engine {
                     }
                 })
                 .on_error(move |_, e| {
-                    let _ = tb.send(Msg { gen, ev: Ev::SubError(e.to_string()) });
+                    let _ = tb.send(Msg {
+                        gen,
+                        ev: Ev::SubError(e.to_string()),
+                    });
                 })
                 .subscribe(self.phase2_queries(floor)),
         )
@@ -960,7 +1206,10 @@ impl Engine {
                 if self.state != ConnState::Down {
                     self.reconnects += 1;
                 }
-                self.schedule_reconnect(format!("disconnected ({})", e.unwrap_or_else(|| "clean".into())));
+                self.schedule_reconnect(format!(
+                    "disconnected ({})",
+                    e.unwrap_or_else(|| "clean".into())
+                ));
             }
             Ev::SubError(e) => self.schedule_reconnect(format!("subscription error: {e}")),
             Ev::Phase1 => self.on_phase1()?,
@@ -975,13 +1224,27 @@ impl Engine {
                 }
             }
             _ if self.state != ConnState::Ready => {}
-            Ev::AuctionOpen { auction_id, match_id, letter, bag_total, closes_at_us } => {
+            Ev::AuctionOpen {
+                auction_id,
+                match_id,
+                letter,
+                bag_total,
+                closes_at_us,
+            } => {
                 if self.ensure_ctx(match_id) {
                     self.on_open_event(match_id, auction_id, letter, bag_total, closes_at_us);
                 }
             }
-            Ev::AuctionResult { auction_id, match_id, letter, winner, paid } => {
-                if let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) {
+            Ev::AuctionResult {
+                auction_id,
+                match_id,
+                letter,
+                winner,
+                paid,
+            } => {
+                if let (Some(conn), Some(ctx)) =
+                    (self.conn.as_ref(), self.matches.get_mut(&match_id))
+                {
                     let env = Env {
                         conn,
                         tel: &self.tel,
@@ -994,19 +1257,30 @@ impl Engine {
                     ctx.apply_result(&env, auction_id, &letter, winner, paid);
                 }
             }
-            Ev::Word { id, match_id, bot_id, word } => {
+            Ev::Word {
+                id,
+                match_id,
+                bot_id,
+                word,
+            } => {
                 if let Some(ctx) = self.matches.get_mut(&match_id) {
                     ctx.apply_word(id, bot_id, &word);
                 }
             }
-            Ev::Participant { match_id, bot_id, balance, score } => {
+            Ev::Participant {
+                match_id,
+                bot_id,
+                balance,
+                score,
+            } => {
                 if Some(bot_id) == self.my_bot && !self.matches.contains_key(&match_id) {
                     self.ensure_ctx(match_id);
                 }
                 if let Some(ctx) = self.matches.get_mut(&match_id) {
                     if bot_id == ctx.me {
                         let pend: i64 = ctx.pending.iter().map(|p| p.reward).sum();
-                        ctx.tracker.on_participant(bot_id, balance + pend, score + pend);
+                        ctx.tracker
+                            .on_participant(bot_id, balance + pend, score + pend);
                     } else {
                         ctx.tracker.on_participant(bot_id, balance, score);
                     }
@@ -1024,7 +1298,9 @@ impl Engine {
             }
             Ev::Rack { match_id } => {
                 if self.opts.mode.is_live() && self.ensure_ctx(match_id) {
-                    if let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) {
+                    if let (Some(conn), Some(ctx)) =
+                        (self.conn.as_ref(), self.matches.get_mut(&match_id))
+                    {
                         let env = Env {
                             conn,
                             tel: &self.tel,
@@ -1041,14 +1317,20 @@ impl Engine {
             }
             Ev::Poke => self.poke = true,
             Ev::WordDone(w) => self.on_word_done(w),
-            Ev::BidDone { match_id, auction_id, amount, result } => {
-                self.on_bid_done(match_id, auction_id, amount, result)
-            }
+            Ev::BidDone {
+                match_id,
+                auction_id,
+                amount,
+                result,
+            } => self.on_bid_done(match_id, auction_id, amount, result),
             Ev::JoinDone(r) => match r {
                 Ok(()) => info!("joined the lobby"),
                 Err(e) => info!("join_lobby refused: {e}"),
             },
-            Ev::RegisterDone { tournament_id, result } => match result {
+            Ev::RegisterDone {
+                tournament_id,
+                result,
+            } => match result {
                 Ok(()) => warn!("*** REGISTERED for tournament {tournament_id} ***"),
                 Err(e) => warn!("register_for_tournament {tournament_id} refused: {e}"),
             },
@@ -1057,11 +1339,15 @@ impl Engine {
     }
 
     fn on_phase1(&mut self) -> Result<()> {
-        let Some(conn) = self.conn.as_ref() else { return Ok(()) };
+        let Some(conn) = self.conn.as_ref() else {
+            return Ok(());
+        };
         let identity = self.identity.or_else(|| conn.try_identity());
         match &self.opts.mode {
             Mode::Live => {
-                let Some(id) = identity else { bail!("connected without an identity") };
+                let Some(id) = identity else {
+                    bail!("connected without an identity")
+                };
                 match conn.db.bot_credential().identity().find(&id) {
                     Some(cred) => {
                         let name = bot_name(&conn.db, cred.bot_id);
@@ -1076,10 +1362,15 @@ impl Engine {
                 }
             }
             Mode::Spectate(Shadow::Bot(b)) => {
-                info!("spectating: shadowing bot '{}' (id {b}); no reducers will be called", bot_name(&conn.db, *b));
+                info!(
+                    "spectating: shadowing bot '{}' (id {b}); no reducers will be called",
+                    bot_name(&conn.db, *b)
+                );
                 self.my_bot = Some(*b);
             }
-            Mode::Spectate(Shadow::All) => info!("spectating every running match; no reducers will be called"),
+            Mode::Spectate(Shadow::All) => {
+                info!("spectating every running match; no reducers will be called")
+            }
         }
         let floor = Self::compute_floor(&conn.db);
         self.floor = floor;
@@ -1102,7 +1393,11 @@ impl Engine {
             .conn
             .as_ref()
             .map(|c| {
-                c.db.match_state().iter().filter(|m| matches!(m.status, MatchStatus::Running)).map(|m| m.id).collect()
+                c.db.match_state()
+                    .iter()
+                    .filter(|m| matches!(m.status, MatchStatus::Running))
+                    .map(|m| m.id)
+                    .collect()
             })
             .unwrap_or_default();
         info!("ready: {} running match(es) on the server", running.len());
@@ -1122,7 +1417,13 @@ impl Engine {
                 parts.iter().any(|p| p.bot_id == me).then_some(me)
             }
             Mode::Spectate(Shadow::All) => {
-                let rating = |id: u64| db.bot_stats().bot_id().find(&id).map(|s| s.rating).unwrap_or(0);
+                let rating = |id: u64| {
+                    db.bot_stats()
+                        .bot_id()
+                        .find(&id)
+                        .map(|s| s.rating)
+                        .unwrap_or(0)
+                };
                 let real = |id: u64| db.bot().id().find(&id).is_some_and(|b| !b.is_simulated);
                 parts
                     .iter()
@@ -1140,8 +1441,12 @@ impl Engine {
         if self.finished.contains(&match_id) || self.ignored.contains(&match_id) {
             return false;
         }
-        let Some(conn) = self.conn.as_ref() else { return false };
-        let Some(m) = conn.db.match_state().id().find(&match_id) else { return false };
+        let Some(conn) = self.conn.as_ref() else {
+            return false;
+        };
+        let Some(m) = conn.db.match_state().id().find(&match_id) else {
+            return false;
+        };
         if !matches!(m.status, MatchStatus::Running) {
             return false;
         }
@@ -1164,8 +1469,14 @@ impl Engine {
             ctx.kind_name,
             ctx.tracker.n_players(),
             bot_name(&conn.db, me),
-            if ctx.resumed { format!(" (joined at auction {})", ctx.tracker.auctions_seen) } else { String::new() },
-            ctx.tournament_id.map(|t| format!(" [tournament {t}]")).unwrap_or_default(),
+            if ctx.resumed {
+                format!(" (joined at auction {})", ctx.tracker.auctions_seen)
+            } else {
+                String::new()
+            },
+            ctx.tournament_id
+                .map(|t| format!(" [tournament {t}]"))
+                .unwrap_or_default(),
         );
         if let Some(a) = open {
             ctx.on_open(&env, &a, m.bag_total, &mut self.lat);
@@ -1174,10 +1485,25 @@ impl Engine {
         true
     }
 
-    fn on_open_event(&mut self, match_id: u64, auction_id: u64, letter: String, bag: Option<u32>, closes_at_us: i64) {
-        let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) else { return };
+    fn on_open_event(
+        &mut self,
+        match_id: u64,
+        auction_id: u64,
+        letter: String,
+        bag: Option<u32>,
+        closes_at_us: i64,
+    ) {
+        let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) else {
+            return;
+        };
         let bag_total = bag
-            .or_else(|| conn.db.match_state().id().find(&match_id).map(|m| m.bag_total))
+            .or_else(|| {
+                conn.db
+                    .match_state()
+                    .id()
+                    .find(&match_id)
+                    .map(|m| m.bag_total)
+            })
             .unwrap_or(u32::MAX);
         let a = Auction {
             id: auction_id,
@@ -1218,7 +1544,13 @@ impl Engine {
             ctx.refresh(&env);
         }
         match &w.result {
-            Ok(()) => info!("m{} played {} (+{}) in {:.0} ms", w.match_id, w.word, word_reward(&w.word), rtt),
+            Ok(()) => info!(
+                "m{} played {} (+{}) in {:.0} ms",
+                w.match_id,
+                w.word,
+                word_reward(&w.word),
+                rtt
+            ),
             Err(e) => warn!("m{} word {} rejected: {e}", w.match_id, w.word),
         }
         self.tel.match_line(
@@ -1239,39 +1571,65 @@ impl Engine {
         );
     }
 
-    fn on_bid_done(&mut self, match_id: u64, auction_id: u64, amount: i64, result: std::result::Result<(), String>) {
+    fn on_bid_done(
+        &mut self,
+        match_id: u64,
+        auction_id: u64,
+        amount: i64,
+        result: std::result::Result<(), String>,
+    ) {
         let Err(e) = result else { return };
         warn!("m{match_id} bid {amount} on auction {auction_id} rejected: {e}");
-        let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) else { return };
+        let (Some(conn), Some(ctx)) = (self.conn.as_ref(), self.matches.get_mut(&match_id)) else {
+            return;
+        };
         if let Some(rec) = ctx.recs.get_mut(&auction_id) {
             rec.bid_error = Some(e.clone());
         }
         // A word we counted on failed, so the coins never arrived: rebid what we have.
-        let still_open = ctx.open.as_ref().is_some_and(|o| o.auction_id == auction_id && !o.retried);
+        let still_open = ctx
+            .open
+            .as_ref()
+            .is_some_and(|o| o.auction_id == auction_id && !o.retried);
         if e.contains("Insufficient balance") && still_open {
-            let bal = participants(&conn.db, match_id).iter().find(|p| p.bot_id == ctx.me).map(|p| p.balance).unwrap_or(0);
+            let bal = participants(&conn.db, match_id)
+                .iter()
+                .find(|p| p.bot_id == ctx.me)
+                .map(|p| p.balance)
+                .unwrap_or(0);
             let retry = amount.min(bal);
             if let Some(o) = ctx.open.as_mut() {
                 o.retried = true;
             }
             if retry > 0 {
                 let (tx, gen) = (self.tx.clone(), self.gen);
-                let _ = conn.reducers.submit_bid_then(auction_id, retry, move |_, o| {
-                    let _ = tx.send(Msg {
-                        gen,
-                        ev: Ev::BidDone { match_id, auction_id, amount: retry, result: flatten_outcome(o) },
+                let _ = conn
+                    .reducers
+                    .submit_bid_then(auction_id, retry, move |_, o| {
+                        let _ = tx.send(Msg {
+                            gen,
+                            ev: Ev::BidDone {
+                                match_id,
+                                auction_id,
+                                amount: retry,
+                                result: flatten_outcome(o),
+                            },
+                        });
                     });
-                });
                 info!("m{match_id} rebid {retry} on auction {auction_id}");
             }
         }
     }
 
     fn finalize(&mut self, match_id: u64) {
-        let Some(mut ctx) = self.matches.remove(&match_id) else { return };
+        let Some(mut ctx) = self.matches.remove(&match_id) else {
+            return;
+        };
         self.finished.insert(match_id);
         self.matches_finished += 1;
-        let Some(conn) = self.conn.as_ref() else { return };
+        let Some(conn) = self.conn.as_ref() else {
+            return;
+        };
         let env = Env {
             conn,
             tel: &self.tel,
@@ -1284,14 +1642,24 @@ impl Engine {
         ctx.barrier(&env);
         let parts = participants(&conn.db, match_id);
         let mine = parts.iter().find(|p| p.bot_id == ctx.me);
-        let (our_score, our_balance) = mine.map(|p| (p.score, p.balance)).unwrap_or((ctx.my_score(), 0));
-        let place = place_of(our_score, parts.iter().filter(|p| p.bot_id != ctx.me).map(|p| p.score));
+        let (our_score, our_balance) = mine
+            .map(|p| (p.score, p.balance))
+            .unwrap_or((ctx.my_score(), 0));
+        let place = place_of(
+            our_score,
+            parts.iter().filter(|p| p.bot_id != ctx.me).map(|p| p.score),
+        );
         let mut scores: Vec<i64> = parts.iter().map(|p| p.score).collect();
         scores.sort_unstable_by(|a, b| b.cmp(a));
         let winner_score = scores.first().copied().unwrap_or(0);
         let players: Vec<PlayerRec> = parts
             .iter()
-            .map(|p| PlayerRec { bot_id: p.bot_id, name: bot_name(&conn.db, p.bot_id), score: p.score, balance: p.balance })
+            .map(|p| PlayerRec {
+                bot_id: p.bot_id,
+                name: bot_name(&conn.db, p.bot_id),
+                score: p.score,
+                balance: p.balance,
+            })
             .collect();
         let ts = now_ms();
         let mode = self.opts.mode.name().to_string();
@@ -1362,11 +1730,17 @@ impl Engine {
     }
 
     fn lobby_check(&mut self) {
-        let (Some(conn), Some(me)) = (self.conn.as_ref(), self.my_bot) else { return };
+        let (Some(conn), Some(me)) = (self.conn.as_ref(), self.my_bot) else {
+            return;
+        };
         let db = &conn.db;
         let in_running = db.match_participant().iter().any(|p| {
             p.bot_id == me
-                && db.match_state().id().find(&p.match_id).is_some_and(|m| matches!(m.status, MatchStatus::Running))
+                && db
+                    .match_state()
+                    .id()
+                    .find(&p.match_id)
+                    .is_some_and(|m| matches!(m.status, MatchStatus::Running))
         });
         if in_running {
             return;
@@ -1374,34 +1748,62 @@ impl Engine {
         let held = db.tournament_entry().iter().any(|e| {
             e.bot_id == me
                 && !e.eliminated
-                && db.tournament().id().find(&e.tournament_id).is_some_and(|t| {
-                    matches!(t.status, TournamentStatus::Swiss | TournamentStatus::Bracket | TournamentStatus::Final)
-                })
+                && db
+                    .tournament()
+                    .id()
+                    .find(&e.tournament_id)
+                    .is_some_and(|t| {
+                        matches!(
+                            t.status,
+                            TournamentStatus::Swiss
+                                | TournamentStatus::Bracket
+                                | TournamentStatus::Final
+                        )
+                    })
         });
         if held {
             return;
         }
-        let open = db.lobby().iter().filter(|l| matches!(l.status, LobbyStatus::Open)).max_by_key(|l| l.id);
+        let open = db
+            .lobby()
+            .iter()
+            .filter(|l| matches!(l.status, LobbyStatus::Open))
+            .max_by_key(|l| l.id);
         if let Some(l) = &open {
-            if db.lobby_member().iter().any(|m| m.lobby_id == l.id && m.bot_id == me) {
+            if db
+                .lobby_member()
+                .iter()
+                .any(|m| m.lobby_id == l.id && m.bot_id == me)
+            {
                 return;
             }
         }
-        if self.last_join.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) {
+        if self
+            .last_join
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(3))
+        {
             return;
         }
         self.last_join = Some(Instant::now());
-        info!("joining lobby{}", open.map(|l| format!(" {}", l.id)).unwrap_or_default());
+        info!(
+            "joining lobby{}",
+            open.map(|l| format!(" {}", l.id)).unwrap_or_default()
+        );
         let (tx, gen) = (self.tx.clone(), self.gen);
         if let Err(e) = conn.reducers.join_lobby_then(move |_, o| {
-            let _ = tx.send(Msg { gen, ev: Ev::JoinDone(flatten_outcome(o)) });
+            let _ = tx.send(Msg {
+                gen,
+                ev: Ev::JoinDone(flatten_outcome(o)),
+            });
         }) {
             warn!("join_lobby send failed: {e}");
         }
     }
 
     fn tournament_check(&mut self) {
-        let (Some(conn), Some(me)) = (self.conn.as_ref(), self.my_bot) else { return };
+        let (Some(conn), Some(me)) = (self.conn.as_ref(), self.my_bot) else {
+            return;
+        };
         let db = &conn.db;
         let open: Vec<u64> = db
             .tournament()
@@ -1410,18 +1812,35 @@ impl Engine {
             .map(|t| t.id)
             .collect();
         for tid in open {
-            if db.tournament_entry().iter().any(|e| e.tournament_id == tid && e.bot_id == me) {
+            if db
+                .tournament_entry()
+                .iter()
+                .any(|e| e.tournament_id == tid && e.bot_id == me)
+            {
                 continue;
             }
-            if self.register_tries.get(&tid).is_some_and(|t| t.elapsed() < Duration::from_secs(10)) {
+            if self
+                .register_tries
+                .get(&tid)
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(10))
+            {
                 continue;
             }
             self.register_tries.insert(tid, Instant::now());
             warn!("*** tournament {tid} is open for registration: registering ***");
             let (tx, gen) = (self.tx.clone(), self.gen);
-            if let Err(e) = conn.reducers.register_for_tournament_then(tid, move |_, o| {
-                let _ = tx.send(Msg { gen, ev: Ev::RegisterDone { tournament_id: tid, result: flatten_outcome(o) } });
-            }) {
+            if let Err(e) = conn
+                .reducers
+                .register_for_tournament_then(tid, move |_, o| {
+                    let _ = tx.send(Msg {
+                        gen,
+                        ev: Ev::RegisterDone {
+                            tournament_id: tid,
+                            result: flatten_outcome(o),
+                        },
+                    });
+                })
+            {
                 warn!("register_for_tournament send failed: {e}");
             }
         }
@@ -1433,7 +1852,10 @@ impl Engine {
         let now = Instant::now();
         if self.state == ConnState::Down && now >= self.reconnect_at {
             if self.failures > self.opts.max_reconnect_failures {
-                bail!("giving up after {} consecutive connection failures", self.failures);
+                bail!(
+                    "giving up after {} consecutive connection failures",
+                    self.failures
+                );
             }
             self.connect();
         }
@@ -1441,7 +1863,9 @@ impl Engine {
             self.reconnects += 1;
             self.schedule_reconnect("connection went inactive".into());
         }
-        if self.state == ConnState::Connecting && now.duration_since(self.connecting_since) > Duration::from_secs(45) {
+        if self.state == ConnState::Connecting
+            && now.duration_since(self.connecting_since) > Duration::from_secs(45)
+        {
             self.schedule_reconnect("timed out waiting for the subscription".into());
         }
         if self.poke && now.duration_since(self.last_poke) >= Duration::from_millis(500) {
@@ -1469,7 +1893,9 @@ impl Engine {
         if self.state != ConnState::Ready {
             return;
         }
-        let Some(conn) = self.conn.as_ref() else { return };
+        let Some(conn) = self.conn.as_ref() else {
+            return;
+        };
         let mut ended = Vec::new();
         let mut missed = Vec::new();
         for (id, ctx) in &self.matches {
@@ -1477,8 +1903,10 @@ impl Engine {
                 Some(m) if matches!(m.status, MatchStatus::Running) => {
                     if let Some(a) = m.current_auction_id.filter(|&a| a > ctx.last_open) {
                         // Give the event queue 250 ms before calling it missed.
-                        let age = |r: &Auction| now_ms() - r.opens_at.to_micros_since_unix_epoch() / 1000;
-                        if let Some(row) = conn.db.auction().id().find(&a).filter(|r| age(r) > 250) {
+                        let age =
+                            |r: &Auction| now_ms() - r.opens_at.to_micros_since_unix_epoch() / 1000;
+                        if let Some(row) = conn.db.auction().id().find(&a).filter(|r| age(r) > 250)
+                        {
                             missed.push((row, m.bag_total));
                         }
                     }
@@ -1488,7 +1916,13 @@ impl Engine {
         }
         for (a, bag) in missed {
             warn!("m{}: caught up on missed auction {}", a.match_id, a.id);
-            self.on_open_event(a.match_id, a.id, a.letter.clone(), Some(bag), a.closes_at.to_micros_since_unix_epoch());
+            self.on_open_event(
+                a.match_id,
+                a.id,
+                a.letter.clone(),
+                Some(bag),
+                a.closes_at.to_micros_since_unix_epoch(),
+            );
         }
         for id in ended {
             self.finalize(id);
@@ -1501,7 +1935,11 @@ impl Engine {
                 .iter()
                 .filter(|m| matches!(m.status, MatchStatus::Running))
                 .map(|m| m.id)
-                .filter(|id| !self.matches.contains_key(id) && !self.ignored.contains(id) && !self.finished.contains(id))
+                .filter(|id| {
+                    !self.matches.contains_key(id)
+                        && !self.ignored.contains(id)
+                        && !self.finished.contains(id)
+                })
                 .collect();
             for id in fresh {
                 self.ensure_ctx(id);
@@ -1554,7 +1992,11 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
     let field = common.field();
     let duel_loaded = duel.is_some();
     let duel_active = duel_loaded && ids.len() <= 2;
-    let active = if duel_active { duel.clone().unwrap_or_else(|| params.clone()) } else { params.clone() };
+    let active = if duel_active {
+        duel.clone().unwrap_or_else(|| params.clone())
+    } else {
+        params.clone()
+    };
     let params_json = serde_json::to_value(&active).unwrap_or(serde_json::Value::Null);
     let mut brain = Brain::new(params, field, m.id ^ 0x5eed_cafe).with_duel(duel);
     brain.start_match();
@@ -1563,24 +2005,46 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
 
     let mut auctions: Vec<Auction> = db.auction().iter().filter(|a| a.match_id == m.id).collect();
     auctions.sort_by_key(|a| a.id);
-    let open = auctions.iter().rev().find(|a| matches!(a.status, AuctionStatus::Open)).cloned();
-    let results: Vec<AuctionResult> = db.auction_result().iter().filter(|r| r.match_id == m.id).collect();
-    let mut words: Vec<WordPlay> = db.word_play().iter().filter(|w| w.match_id == m.id).collect();
+    let open = auctions
+        .iter()
+        .rev()
+        .find(|a| matches!(a.status, AuctionStatus::Open))
+        .cloned();
+    let results: Vec<AuctionResult> = db
+        .auction_result()
+        .iter()
+        .filter(|r| r.match_id == m.id)
+        .collect();
+    let mut words: Vec<WordPlay> = db
+        .word_play()
+        .iter()
+        .filter(|w| w.match_id == m.id)
+        .collect();
     words.sort_by_key(|w| w.id);
 
     if env.mode.is_live() {
         // Before any auction the rack is the deal; reconstruct it if we join late.
-        let won = results.iter().filter(|r| r.winner_bot_id == Some(me)).fold(Rack::EMPTY, |mut acc, r| {
-            if let Some(l) = letter_of(&r.letter) {
-                acc.add(l);
-            }
-            acc
-        });
-        let mine = words.iter().filter(|w| w.bot_id == me).map(|w| w.word.as_str());
+        let won = results.iter().filter(|r| r.winner_bot_id == Some(me)).fold(
+            Rack::EMPTY,
+            |mut acc, r| {
+                if let Some(l) = letter_of(&r.letter) {
+                    acc.add(l);
+                }
+                acc
+            },
+        );
+        let mine = words
+            .iter()
+            .filter(|w| w.bot_id == me)
+            .map(|w| w.word.as_str());
         tracker.set_my_rack(derive_deal(cache_rack(db, m.id, me), mine, &won));
     }
 
-    let tournament_id = db.tournament_match().iter().find(|t| t.match_id == m.id).map(|t| t.tournament_id);
+    let tournament_id = db
+        .tournament_match()
+        .iter()
+        .find(|t| t.match_id == m.id)
+        .map(|t| t.tournament_id);
     let mut ctx = MatchCtx {
         match_id: m.id,
         me,
@@ -1607,7 +2071,11 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
     let open_id = open.as_ref().map(|a| a.id);
     let mut hist: Vec<HistItem> = Vec::new();
     for a in auctions.iter().filter(|a| Some(a.id) != open_id) {
-        hist.push(HistItem::Open { auction_id: a.id, letter: a.letter.clone(), ts: a.opens_at.to_micros_since_unix_epoch() });
+        hist.push(HistItem::Open {
+            auction_id: a.id,
+            letter: a.letter.clone(),
+            ts: a.opens_at.to_micros_since_unix_epoch(),
+        });
     }
     for r in &results {
         hist.push(HistItem::Result {
@@ -1636,10 +2104,16 @@ fn build_ctx(env: &Env, common: &Common, m: &Match, me: u64) -> (MatchCtx, Optio
                 ctx.last_open = *auction_id;
             }
             // These also feed the brain's price model and our counters.
-            HistItem::Result { auction_id, letter, winner, paid, .. } => {
-                ctx.apply_result(env, *auction_id, letter, *winner, *paid)
-            }
-            HistItem::Word { id, bot_id, word, .. } => ctx.apply_word(*id, *bot_id, word),
+            HistItem::Result {
+                auction_id,
+                letter,
+                winner,
+                paid,
+                ..
+            } => ctx.apply_result(env, *auction_id, letter, *winner, *paid),
+            HistItem::Word {
+                id, bot_id, word, ..
+            } => ctx.apply_word(*id, *bot_id, word),
         }
     }
     ctx.resumed = ctx.tracker.auctions_seen > 0;
@@ -1711,7 +2185,11 @@ pub struct RunStats {
 
 impl RunStats {
     pub fn report(&self) -> String {
-        let p = |q| percentile(&self.latencies_ms, q).map(|x| format!("{x:.1}")).unwrap_or_else(|| "-".into());
+        let p = |q| {
+            percentile(&self.latencies_ms, q)
+                .map(|x| format!("{x:.1}"))
+                .unwrap_or_else(|| "-".into())
+        };
         let max = self.latencies_ms.iter().cloned().fold(f64::NAN, f64::max);
         format!(
             "decisions {} | latency ms p50 {} p95 {} p99 {} max {} | matches finished {}",
@@ -1719,7 +2197,11 @@ impl RunStats {
             p(50.0),
             p(95.0),
             p(99.0),
-            if max.is_nan() { "-".into() } else { format!("{max:.1}") },
+            if max.is_nan() {
+                "-".into()
+            } else {
+                format!("{max:.1}")
+            },
             self.matches_finished
         )
     }
@@ -1745,9 +2227,15 @@ mod tests {
 
     #[test]
     fn stats_report_handles_empty() {
-        let s = RunStats { latencies_ms: vec![], matches_finished: 0 };
+        let s = RunStats {
+            latencies_ms: vec![],
+            matches_finished: 0,
+        };
         assert!(s.report().contains("p50 -"));
-        let s = RunStats { latencies_ms: vec![1.0, 2.0, 3.0], matches_finished: 1 };
+        let s = RunStats {
+            latencies_ms: vec![1.0, 2.0, 3.0],
+            matches_finished: 1,
+        };
         assert!(s.report().contains("p50 2.0"));
     }
 }

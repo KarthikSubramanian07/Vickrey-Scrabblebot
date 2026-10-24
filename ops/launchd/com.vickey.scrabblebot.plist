@@ -10,7 +10,13 @@
   <string>com.vickey.scrabblebot</string>
 
   <key>ProgramArguments</key>
+  <!-- caffeinate keeps the Mac from idle- or system-sleeping (on AC power)
+       while the bot runs: an asleep bot is still seated in tournament
+       matches and loses every auction it misses. -->
   <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>-s</string>
     <string>__REPO__/target/release/vickey</string>
     <string>run</string>
   </array>

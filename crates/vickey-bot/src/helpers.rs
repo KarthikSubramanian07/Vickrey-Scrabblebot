@@ -34,7 +34,11 @@ pub fn rack_minus(a: Rack, b: &Rack) -> Rack {
 
 /// Our dealt tiles, reconstructed mid-match: what we hold now, plus what we
 /// spent in words, minus what we bought at auction.
-pub fn derive_deal<'a>(rack_now: Rack, played: impl IntoIterator<Item = &'a str>, won: &Rack) -> Rack {
+pub fn derive_deal<'a>(
+    rack_now: Rack,
+    played: impl IntoIterator<Item = &'a str>,
+    won: &Rack,
+) -> Rack {
     let mut r = rack_now;
     for w in played {
         r.plus(&Rack::from_word(w));
@@ -56,9 +60,25 @@ pub fn place_of(my_score: i64, others: impl IntoIterator<Item = i64>) -> usize {
 /// One entry of a match's public history, for replaying it into a tracker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HistItem {
-    Open { auction_id: u64, letter: String, ts: i64 },
-    Result { auction_id: u64, letter: String, winner: Option<u64>, paid: i64, ts: i64 },
-    Word { id: u64, bot_id: u64, word: String, reward: i64, ts: i64 },
+    Open {
+        auction_id: u64,
+        letter: String,
+        ts: i64,
+    },
+    Result {
+        auction_id: u64,
+        letter: String,
+        winner: Option<u64>,
+        paid: i64,
+        ts: i64,
+    },
+    Word {
+        id: u64,
+        bot_id: u64,
+        word: String,
+        reward: i64,
+        ts: i64,
+    },
 }
 
 impl HistItem {
@@ -89,7 +109,12 @@ pub fn feed_tracker(t: &mut Tracker, item: &HistItem, n_players: usize, starting
                 t.on_auction_open(l, bag_left_at(seq, n_players, starting_rack));
             }
         }
-        HistItem::Result { letter, winner, paid, .. } => {
+        HistItem::Result {
+            letter,
+            winner,
+            paid,
+            ..
+        } => {
             if let Some(l) = letter_of(letter) {
                 t.on_auction_result(l, *winner, *paid);
             }
@@ -177,10 +202,30 @@ mod tests {
     #[test]
     fn history_orders_result_word_open_on_ties() {
         let mut h = vec![
-            HistItem::Open { auction_id: 2, letter: "B".into(), ts: 10 },
-            HistItem::Word { id: 7, bot_id: 1, word: "AB".into(), reward: 4, ts: 10 },
-            HistItem::Result { auction_id: 1, letter: "A".into(), winner: Some(1), paid: 3, ts: 10 },
-            HistItem::Open { auction_id: 1, letter: "A".into(), ts: 9 },
+            HistItem::Open {
+                auction_id: 2,
+                letter: "B".into(),
+                ts: 10,
+            },
+            HistItem::Word {
+                id: 7,
+                bot_id: 1,
+                word: "AB".into(),
+                reward: 4,
+                ts: 10,
+            },
+            HistItem::Result {
+                auction_id: 1,
+                letter: "A".into(),
+                winner: Some(1),
+                paid: 3,
+                ts: 10,
+            },
+            HistItem::Open {
+                auction_id: 1,
+                letter: "A".into(),
+                ts: 9,
+            },
         ];
         order_history(&mut h);
         assert!(matches!(h[0], HistItem::Open { auction_id: 1, .. }));
@@ -215,12 +260,42 @@ mod tests {
         let mut t = Tracker::new(1, 10, AuctionKind::Vickrey, &[10, 20], 5);
         t.set_my_rack(Rack::from_word("CATSX"));
         let mut h = vec![
-            HistItem::Open { auction_id: 1, letter: "Q".into(), ts: 1 },
-            HistItem::Result { auction_id: 1, letter: "Q".into(), winner: Some(20), paid: 9, ts: 2 },
-            HistItem::Word { id: 5, bot_id: 20, word: "QI".into(), reward: 11, ts: 2 },
-            HistItem::Open { auction_id: 2, letter: "E".into(), ts: 2 },
-            HistItem::Result { auction_id: 2, letter: "E".into(), winner: None, paid: 0, ts: 3 },
-            HistItem::Open { auction_id: 3, letter: "Z".into(), ts: 3 },
+            HistItem::Open {
+                auction_id: 1,
+                letter: "Q".into(),
+                ts: 1,
+            },
+            HistItem::Result {
+                auction_id: 1,
+                letter: "Q".into(),
+                winner: Some(20),
+                paid: 9,
+                ts: 2,
+            },
+            HistItem::Word {
+                id: 5,
+                bot_id: 20,
+                word: "QI".into(),
+                reward: 11,
+                ts: 2,
+            },
+            HistItem::Open {
+                auction_id: 2,
+                letter: "E".into(),
+                ts: 2,
+            },
+            HistItem::Result {
+                auction_id: 2,
+                letter: "E".into(),
+                winner: None,
+                paid: 0,
+                ts: 3,
+            },
+            HistItem::Open {
+                auction_id: 3,
+                letter: "Z".into(),
+                ts: 3,
+            },
         ];
         order_history(&mut h);
         for item in &h {
