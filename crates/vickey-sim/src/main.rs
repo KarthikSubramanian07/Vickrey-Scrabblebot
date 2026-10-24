@@ -366,6 +366,11 @@ fn main() -> Result<()> {
                 if !profiles.split(',').any(|p| p.trim() == prof) {
                     continue;
                 }
+                // A live A/B test owns the multi-seat champion while it runs.
+                if prof == "multi" && std::path::Path::new("config/ab.json").exists() {
+                    eprintln!("[multi] skipped: a live A/B test is deciding params.json");
+                    continue;
+                }
                 let start = Params::load(&out).unwrap_or_default();
                 let mut on_step = |step: &vickey_sim::tune::Step, inc: &Params| {
                     eprintln!(
