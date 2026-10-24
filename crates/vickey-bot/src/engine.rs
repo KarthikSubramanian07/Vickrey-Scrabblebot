@@ -1795,6 +1795,9 @@ impl Engine {
                     warn!("{msg}");
                 }
             }
+            if let Some(msg) = crate::ab::advance_queue(&common.config_dir) {
+                warn!("{msg}");
+            }
         }
         self.autopilot();
     }
