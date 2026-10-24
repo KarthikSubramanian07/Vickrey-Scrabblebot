@@ -55,6 +55,10 @@ pub struct Params {
     /// worth `volume_min_value`+ points to us (0 = off).
     pub volume_floor: f64,
     pub volume_min_value: f64,
+    /// In the last N usable auctions, bid the whole balance on any letter
+    /// worth at least `endgame_allin_min_value` points (0 = off).
+    pub endgame_allin_auctions: u32,
+    pub endgame_allin_min_value: f64,
     /// Cap bids on J/K/Q/X/Z at this multiple of the market median (0 = off).
     pub premium_cap_mult: f64,
     /// Weight on denying the strongest rival (relative-score games).
@@ -110,6 +114,8 @@ impl Default for Params {
             first_price_shade: true,
             volume_floor: 0.0,
             volume_min_value: 2.0,
+            endgame_allin_auctions: 0,
+            endgame_allin_min_value: 3.0,
             premium_cap_mult: 0.0,
             deny_weight: 0.5,
             deny_max_players: 2,

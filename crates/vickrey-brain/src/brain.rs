@@ -473,6 +473,17 @@ impl Brain {
         }
         let d = self.dist(t, letter);
         let mut truthful = (value / lambda).min(balance as f64);
+        // Endgame: with few usable auctions left, leftover coins are worth
+        // nothing, so a letter worth real points deserves everything we have.
+        // Under Vickrey we only pay the runner-up, so this costs nothing extra
+        // when we would have won anyway.
+        let left = Self::usable_future(t) + 1;
+        if self.params.endgame_allin_auctions > 0
+            && left <= self.params.endgame_allin_auctions
+            && value >= self.params.endgame_allin_min_value
+        {
+            truthful = balance as f64;
+        }
         // Prices run ~35% hot in the opening quarter; optionally bid under value there.
         if self.params.opening_shade > 0.0 && t.progress() < 0.25 {
             truthful *= 1.0 - self.params.opening_shade.min(0.9);
@@ -841,6 +852,26 @@ mod tests {
             "{f:?} median {median}"
         );
         assert!(f.amount >= p.amount);
+    }
+
+    #[test]
+    fn endgame_allin_bids_the_balance_on_valuable_letters() {
+        let p = Params {
+            endgame_allin_auctions: 6,
+            endgame_allin_min_value: 3.0,
+            ..Params::default()
+        };
+        let e = index('E').unwrap();
+        // 4 usable auctions left, E completes CAZIQUE: go all in.
+        let mut t = tracker_with("CAZIQU", 4);
+        t.on_participant(1, 37, 0);
+        let mut b = Brain::new(p.clone(), FieldModel::default(), 8);
+        assert_eq!(b.bid(&t, e).amount, 37);
+        // Same rack with 40 left: normal pacing, well under the balance.
+        let mut t2 = tracker_with("CAZIQU", 40);
+        t2.on_participant(1, 100, 0);
+        let mut b2 = Brain::new(p, FieldModel::default(), 8);
+        assert!(b2.bid(&t2, e).amount < 100);
     }
 
     #[test]
