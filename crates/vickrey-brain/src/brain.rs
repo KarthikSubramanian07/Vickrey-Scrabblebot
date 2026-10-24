@@ -121,6 +121,12 @@ impl Brain {
         }
     }
 
+    /// Exact value of a small rack, for the endgame where no future letters
+    /// are sampled and greedy can misprice one extra letter.
+    fn terminal_exact(&self, rack: &Rack) -> f64 {
+        Solver::with_budget(self.dict, 20_000).solve(rack).score as f64
+    }
+
     /// Future auctions whose letters we could still play (the last never can).
     fn usable_future(t: &Tracker) -> u32 {
         t.bag_left.saturating_sub(1)
@@ -208,6 +214,17 @@ impl Brain {
         } else {
             self.sample_futures(&unseen, k, samples.max(1))
         };
+        // Endgame: nothing left to sample, so value the rack exactly.
+        let exact = k == 0
+            && self.params.exact_terminal_max > 0
+            && rack.len() < self.params.exact_terminal_max;
+        let eval = |me: &Brain, r: &Rack| {
+            if exact {
+                me.terminal_exact(r)
+            } else {
+                me.terminal(r)
+            }
+        };
         let mut base = 0.0;
         let mut with = vec![0.0; letters.len()];
         let mut used = 0u64;
@@ -215,9 +232,9 @@ impl Brain {
         for f in &futures {
             let mut r = *rack;
             r.plus(f);
-            base += self.terminal(&r);
+            base += eval(self, &r);
             for (j, &l) in letters.iter().enumerate() {
-                with[j] += self.terminal(&r.with(l));
+                with[j] += eval(self, &r.with(l));
             }
             n += 1;
             let len = r.len() as u64 + 1;
@@ -759,6 +776,36 @@ mod tests {
             "{d:?}"
         );
         assert!(d.amount >= 0 && d.amount <= 100);
+    }
+
+    #[test]
+    fn exact_terminal_sees_what_greedy_misses() {
+        // Greedy grabs the single best word first; the exact solver finds
+        // the better two-word split. Exact valuation must never be lower.
+        let exact = Brain::new(
+            Params {
+                exact_terminal_max: 16,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        let greedy = Brain::new(Params::default(), FieldModel::default(), 1);
+        let mut rng = SmallRng::seed_from_u64(3);
+        let pool: Vec<Letter> = (0..ALPHABET)
+            .flat_map(|l| std::iter::repeat_n(l, vickrey_core::BAG[l] as usize))
+            .collect();
+        let mut strictly_better = 0;
+        for _ in 0..60 {
+            let mut r = Rack::EMPTY;
+            for _ in 0..12 {
+                r.add(pool[rng.gen_range(0..pool.len())]);
+            }
+            let (e, g) = (exact.terminal_exact(&r), greedy.terminal(&r));
+            assert!(e >= g, "exact {e} < greedy {g} for {r}");
+            strictly_better += (e > g) as u32;
+        }
+        assert!(strictly_better > 0);
     }
 
     #[test]

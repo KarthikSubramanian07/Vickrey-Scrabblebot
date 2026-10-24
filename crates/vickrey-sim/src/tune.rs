@@ -186,7 +186,7 @@ pub fn mutate(p: &Params, profile: Profile, rng: &mut SmallRng) -> Params {
         let lognorm =
             |x: f64, s: f64, rng: &mut SmallRng| x * (rng.gen_range(-1.0..1.0f64) * s).exp();
         let lin = |x: f64, s: f64, rng: &mut SmallRng| x + rng.gen_range(-1.0..1.0f64) * s;
-        match rng.gen_range(0..13) {
+        match rng.gen_range(0..18) {
             0 => q.income_factor = lin(q.income_factor, 0.4, rng).clamp(0.0, 3.0),
             1 => q.spend_target = lin(q.spend_target, 0.2, rng).clamp(0.5, 2.0),
             2 => q.choice_mult = lin(q.choice_mult, 0.4, rng).clamp(0.6, 3.5),
@@ -201,6 +201,17 @@ pub fn mutate(p: &Params, profile: Profile, rng: &mut SmallRng) -> Params {
             }
             9 => q.cheap_grab_value = lognorm(q.cheap_grab_value, 0.5, rng).clamp(0.1, 5.0),
             11 if rng.gen_bool(0.3) => q.mu_liquidity = !q.mu_liquidity,
+            13 => q.phase_aware_pacing = !q.phase_aware_pacing,
+            14 => q.opening_shade = lin(q.opening_shade, 0.1, rng).clamp(0.0, 0.5),
+            15 => {
+                q.premium_cap_mult = if q.premium_cap_mult == 0.0 {
+                    1.2
+                } else {
+                    lognorm(q.premium_cap_mult, 0.3, rng).clamp(0.5, 3.0)
+                }
+            }
+            16 => q.starve_coins = (q.starve_coins + rng.gen_range(-8..=8)).clamp(0, 50),
+            17 => q.exact_terminal_max = if q.exact_terminal_max == 0 { 18 } else { 0 },
             10 if profile == Profile::Duel => {
                 q.deny_weight = lin(q.deny_weight, 0.3, rng).clamp(0.0, 1.5)
             }
