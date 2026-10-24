@@ -1,7 +1,8 @@
 //! Lineups, batch evaluation and summary statistics.
 
 use crate::agents::{
-    Agent, CloneKind, FieldBot, LiveClone, ServerSim, SimStrategy, Starter, Vickrey,
+    Agent, CloneKind, FieldBot, GauchoClone, LiveClone, NijelloClone, ServerSim, SimStrategy,
+    SookraClone, Starter, Vickrey,
 };
 use crate::engine::{play_match, MatchConfig};
 use rayon::prelude::*;
@@ -21,6 +22,10 @@ pub fn make_agent(spec: &str, params: &Params, field: &FieldModel, seed: u64) ->
         "brutus" => Box::new(ServerSim::new(SimStrategy::Aggressive, label, seed)),
         "ramp" => Box::new(LiveClone::new(label, CloneKind::Ramp, seed)),
         "flat" => Box::new(LiveClone::new(label, CloneKind::Flat, seed)),
+        "hunter" => Box::new(LiveClone::new(label, CloneKind::Hunter, seed)),
+        "nijello" => Box::new(NijelloClone::new(label, seed)),
+        "sookra" => Box::new(SookraClone::new(label, seed)),
+        "gaucho" => Box::new(GauchoClone::new(label)),
         other => Box::new(FieldBot::preset_with(other, seed, field.clone())),
     }
 }

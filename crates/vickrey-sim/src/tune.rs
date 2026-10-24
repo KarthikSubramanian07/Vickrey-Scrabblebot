@@ -28,10 +28,10 @@ const FIELD_FILL: [&str; 8] = [
     "ramp",
     "ramp",
     "flat",
-    "flat",
-    "shark",
-    "volume",
-    "vickrey@pop",
+    "nijello",
+    "nijello",
+    "sookra",
+    "hunter",
     "vickrey@pop",
 ];
 
