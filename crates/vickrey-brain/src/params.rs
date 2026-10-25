@@ -27,6 +27,12 @@ pub struct Params {
     /// Extra letters sampled per expected win, standing in for our freedom
     /// to pick which letters to buy.
     pub choice_mult: f64,
+    /// Premium letters (J, K, Q, X, Z) are valued against this many times
+    /// more future letters. A premium needs specific partners, which a short
+    /// sampled future rarely contains, so its marginal value collapses in the
+    /// second half; the live leaders win 42% of second-half premium auctions
+    /// to our 3%. 1.0 disables.
+    pub premium_choice_mult: f64,
     /// Cap on future letters assumed.
     pub max_future: usize,
 
@@ -112,6 +118,7 @@ impl Default for Params {
             solve_nodes: 0,
             win_share_scale: 1.0,
             choice_mult: 1.6,
+            premium_choice_mult: 1.0,
             max_future: 24,
             income_factor: 0.8,
             lambda_min: 0.05,
