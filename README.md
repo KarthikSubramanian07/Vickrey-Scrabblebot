@@ -2,11 +2,29 @@
 
 > A sealed-bid word shark for [ScrabbleBot](https://scrabblebot.spacetimedb.com), the bot-vs-bot auction e-sport that SpacetimeDB runs at Cal Hacks 13.0. Written in Rust. It values every tile by Monte Carlo, paces its coins like an ad exchange, and tunes itself against the live league while it sleeps.
 
-![Rust](https://img.shields.io/badge/Rust-2021-b7410e?logo=rust) ![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-2.13-1f2328) ![Cal Hacks 13.0](https://img.shields.io/badge/Cal%20Hacks-13.0-fdb515) ![Auctions](https://img.shields.io/badge/auctions-Vickrey%20%2B%20first--price-6e40c9) ![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Rust](https://img.shields.io/badge/Rust-2021-b7410e?logo=rust) ![SpacetimeDB](https://img.shields.io/badge/SpacetimeDB-2.13-1f2328) ![Cal Hacks 13.0](https://img.shields.io/badge/Cal%20Hacks-13.0-fdb515) ![Auctions](https://img.shields.io/badge/auctions-Vickrey%20%2B%20first--price-6e40c9) ![License: MIT](https://img.shields.io/badge/license-MIT-green) ![Status: finished](https://img.shields.io/badge/status-finished-lightgrey)
 
 **Tags:** `scrabblebot` `spacetimedb` `rust` `auction-theory` `vickrey-auction` `monte-carlo` `game-ai` `bot` `cal-hacks` `self-improving`
 
 Named for William Vickrey, the Nobel laureate whose second-price auction runs every round of this game. The bot it drives plays on the live league as **Karthik**.
+
+> **Status: finished.** The project wrapped up after the Cal Hacks 13.0 tournament on October 25, 2026. The code stays public as a record; it is not maintained and does not accept contributions.
+
+## How it ended
+
+**Tournament:** 68 bots, four Swiss rounds at six-seat second-price tables, then a top-six knockout and a heads-up final. Karthik finished **49th** with 12 Swiss points (3rd, 4th, 5th and 4th at its four tables), scoring 66 to 76 per match against an 89 average in casual play. K-13 won, ahead of TileShark and Waupus.
+
+**Casual league, after the last fixes:** about 360 matches, 27% wins (1 in 6 is break-even), half of them top-two finishes, average place 2.65 of 6.
+
+**What worked**
+- An instant *anchor* bid sent the moment an auction opens. Under server lag, bids that left with 800 ms to spare were rejected as late; ghost losses fell from 2.4 per match to 0.006.
+- A connection health check that replaces a lagging connection, after playing out any near-finished rack first.
+- Holding mid-match words worth under 45 points unless short of coins, which is what the league leaders do: +0.5 Swiss points per match and +66 to +70 points per heads-up game in paired simulation.
+- After the tournament, Lambi Lambiii's published *drain floor* for heads-up play: bid every useful letter at 0.8x the going price so the rival pays more for what it wins. +119 to +123 points per heads-up game against the leader clones.
+
+**What did not** (each lost to the champion in paired simulation against calibrated clones of the leaders): spending harder, premium-letter caps and a premium-coin reserve, cashing shorter words, earlier cash-ins, income-factor changes, volume floors at the market price, a longer premium valuation horizon, and Lala's completion floor.
+
+**Why it was not enough:** the bot played close to its casual level; the top-six cut needed an average finish near 1.5. The winners model each rival individually and plan the whole match (several published their code after the tournament), while Vickrey bids against an average market. The simulator also rated Vickrey far stronger than live play did, which made many changes look safe that were not.
 
 ---
 
