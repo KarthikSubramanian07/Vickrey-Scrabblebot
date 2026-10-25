@@ -85,6 +85,13 @@ pub struct Params {
     // ---- play ----
     /// Never play a word shorter than this mid-match (the final dump plays everything).
     pub min_play_len: usize,
+    /// Mid-match words paying less than this are held for a longer, richer
+    /// word unless we are starved or in the late window. The live leaders
+    /// (james, Waupus, Lambi Lambiii) make 84-86% of their mid-match plays at
+    /// 45+ points or when broke, first play around auction 36-40, and earn
+    /// 32-36 points in the last quarter; we cash at ~40 points around
+    /// auction 20 and earn 12.7 there. 0 disables.
+    pub cash_min_reward: u32,
     /// Value of playing now: liquidity credit per point, times λ.
     pub liquidity: f64,
     /// Price liquidity with μ (marginal points per coin under the balance
@@ -141,6 +148,7 @@ impl Default for Params {
             deny_weight: 0.5,
             deny_max_players: 2,
             min_play_len: 6,
+            cash_min_reward: 0,
             liquidity: 0.6,
             mu_liquidity: false,
             late_window: 0,
