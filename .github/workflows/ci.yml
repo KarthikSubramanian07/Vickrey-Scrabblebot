@@ -18,6 +18,9 @@ env:
 jobs:
   check:
     name: fmt · clippy · test
+    # Self-hosted runner on a personal Mac: never run code from a fork's
+    # pull request on it. Same-repository branches and pushes to main only.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, vickrey]
     steps:
       - uses: actions/checkout@v4
