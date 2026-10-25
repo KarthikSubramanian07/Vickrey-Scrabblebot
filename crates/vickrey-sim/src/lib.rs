@@ -15,7 +15,7 @@ pub mod tournament;
 pub mod tune;
 
 pub use agents::{
-    Agent, CloneKind, FieldBot, GauchoClone, LiveClone, NijelloClone, ServerSim, SimStrategy,
-    SookraClone, Starter, Vickrey,
+    Agent, ClassFit, CloneKind, FieldBot, GauchoClone, LambiClone, LiveClone, NijelloClone,
+    ServerSim, SimStrategy, SookraClone, Starter, Vickrey,
 };
 pub use engine::{play_match, MatchConfig, MatchResult};
