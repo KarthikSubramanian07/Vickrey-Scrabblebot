@@ -217,6 +217,33 @@ impl Market {
         let w = (1.0 / (self.obs as f64 + 3.0)).max(0.12);
         self.heat = (self.heat.ln() * (1.0 - w) + ratio.ln() * w).exp();
     }
+
+    /// First-price winners pay their own bid. A loss reveals the exact
+    /// highest opposing bid; a win reveals only that it was at most `paid`.
+    /// A winning bid can therefore cool an overestimated market toward its
+    /// upper bound, but must never heat the market toward our own valuation.
+    pub fn observe_first_price(
+        &mut self,
+        letter: Letter,
+        progress: f64,
+        paid: i64,
+        we_won: bool,
+        n_opponents: usize,
+    ) {
+        if paid <= 0 {
+            return;
+        }
+        let pred = self.field.median[letter]
+            * self.field.phase_factor(progress)
+            * Self::table_factor(n_opponents, self.field.ref_players);
+        let ratio = (paid as f64 / pred).clamp(0.2, 5.0);
+        if we_won && ratio >= self.heat {
+            return;
+        }
+        self.obs += 1;
+        let w = (1.0 / (self.obs as f64 + 3.0)).max(0.12);
+        self.heat = (self.heat.ln() * (1.0 - w) + ratio.ln() * w).exp();
+    }
 }
 
 #[cfg(test)]
@@ -260,5 +287,42 @@ mod tests {
             m.observe(0, 0.5, 30, true, 5, 0);
         }
         assert!(m.heat > 1.8);
+    }
+
+    fn flat_field() -> FieldModel {
+        FieldModel {
+            median: [10.0; ALPHABET],
+            phase: vec![1.0],
+            ref_players: 6,
+            ..FieldModel::default()
+        }
+    }
+
+    #[test]
+    fn first_price_loss_reveals_rival_bid_without_second_price_inflation() {
+        let mut first = Market::new(flat_field());
+        let mut second = Market::new(flat_field());
+        first.observe_first_price(0, 0.5, 10, false, 5);
+        second.observe(0, 0.5, 10, false, 5, 8);
+        assert_eq!(first.heat, 1.0);
+        assert!(second.heat > 1.0);
+        // A reserve-price first-price loss is also an exact observation.
+        first.observe_first_price(0, 0.5, 1, false, 5);
+        assert!(first.heat < 1.0);
+    }
+
+    #[test]
+    fn first_price_win_is_only_an_upper_bound_on_rival_bid() {
+        let mut market = Market::new(flat_field());
+        for _ in 0..20 {
+            market.observe_first_price(0, 0.5, 100, true, 5);
+        }
+        assert_eq!(market.heat, 1.0);
+        assert_eq!(market.obs, 0);
+        // Winning with five proves the rival maximum is at most five.
+        // Cool toward that bound without treating it as an exact maximum.
+        market.observe_first_price(0, 0.5, 5, true, 5);
+        assert!(market.heat < 1.0 && market.heat > 0.5);
+        assert_eq!(market.obs, 1);
     }
 }

@@ -24,5 +24,7 @@
   "bid_deadline_ms": 300,
   "premium_cap_mult": 1.0,
   "premium_cap_until": 0.5,
-  "cash_min_reward": 45
+  "cash_min_reward": 45,
+  "endgame_allin_auctions": 1,
+  "endgame_allin_min_value": 0.3
 }
