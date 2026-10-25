@@ -63,6 +63,8 @@ pub struct Brain {
     last_bid: i64,
     /// Wall-clock cut-off for the current decision's sampling, if any.
     deadline: Option<std::time::Instant>,
+    /// Multiplier on the sampled future's size (see `premium_choice_mult`).
+    future_mult: f64,
 }
 
 impl Brain {
@@ -82,6 +84,7 @@ impl Brain {
             last_lambda: 0.3,
             last_bid: 0,
             deadline: None,
+            future_mult: 1.0,
         }
     }
 
@@ -182,7 +185,7 @@ impl Brain {
     }
 
     fn future_size(&self, t: &Tracker) -> usize {
-        let k = self.expected_wins(t) * self.params.choice_mult;
+        let k = self.expected_wins(t) * self.params.choice_mult * self.future_mult;
         (k.round() as usize)
             .min(self.params.max_future)
             .min(Self::usable_future(t) as usize)
@@ -513,6 +516,20 @@ impl Brain {
         );
         let mut value = v[0];
         self.table[letter] = value;
+        // Premiums need specific partners: value them over a longer future.
+        if self.params.premium_choice_mult > 1.0 && VALUE[letter] >= 5 {
+            self.future_mult = self.params.premium_choice_mult;
+            let (_, v) = self.marginal_values_capped(
+                t,
+                &t.my_rack.clone(),
+                &[letter],
+                self.params.samples,
+                self.params.work_budget,
+            );
+            self.future_mult = 1.0;
+            value = v[0];
+            self.table[letter] = value;
+        }
         if self.params.deny_weight > 0.0 && t.n_players() <= self.params.deny_max_players {
             value += self.params.deny_weight * self.rival_value(t, letter);
         }
@@ -763,6 +780,37 @@ mod tests {
         t.set_my_rack(Rack::from_word(rack));
         t.on_auction_open(index('E').unwrap(), bag_left);
         t
+    }
+
+    #[test]
+    fn longer_premium_horizon_raises_a_premium_value() {
+        // Mid-match, a Q with a U in hand: over a short sampled future it
+        // rarely meets its partners; over a longer one it does.
+        let mut t = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 5);
+        t.set_my_rack(Rack::from_word("UIRTE"));
+        let q = index('Q').unwrap();
+        t.on_auction_open(q, 34);
+        let mut short = Brain::new(Params::default(), FieldModel::default(), 4);
+        let p = Params {
+            premium_choice_mult: 3.0,
+            ..Params::default()
+        };
+        let mut long = Brain::new(p, FieldModel::default(), 4);
+        let (a, b) = (short.bid(&t, q).value, long.bid(&t, q).value);
+        assert!(b >= a, "short {a} long {b}");
+        // Non-premium letters are untouched.
+        let e = index('E').unwrap();
+        let mut s2 = Brain::new(Params::default(), FieldModel::default(), 4);
+        let mut l2 = Brain::new(
+            Params {
+                premium_choice_mult: 3.0,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            4,
+        );
+        t.on_auction_open(e, 33);
+        assert_eq!(s2.bid(&t, e).value, l2.bid(&t, e).value);
     }
 
     #[test]
