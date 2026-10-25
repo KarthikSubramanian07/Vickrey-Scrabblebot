@@ -21,6 +21,16 @@ until [ "$(wc -l < runs/summary.jsonl)" -gt "$n" ]; do sleep 0.3; done
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 nohup ./target/release/vickrey run --no-lobby --no-tournaments >> runs/vickrey.out.log 2>> runs/vickrey.err.log &
 IDLE_PID=$!
+# Whatever kills this script (harness restart, Ctrl-C, an error), the live
+# bot comes back: on Oct 25 a parked bot sat offline for 20 minutes after the
+# controlling process died mid-window.
+restore() {
+  (cd "$RUNNER" && ./svc.sh stop >/dev/null 2>&1) || true
+  kill "$IDLE_PID" 2>/dev/null || true
+  launchctl bootstrap "$DOMAIN" "$HOME/Library/LaunchAgents/$LABEL.plist" 2>/dev/null || true
+  launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null || true
+}
+trap restore EXIT HUP INT TERM
 echo "idle bot $IDLE_PID playing out any seated match"
 sleep 8
 until python3 -c "import json,sys; d=json.load(open('runs/heartbeat')); sys.exit(0 if d['pid']==$IDLE_PID and not d['matches_live'] else 1)" 2>/dev/null; do sleep 2; done
@@ -44,6 +54,7 @@ kill "$IDLE_PID" 2>/dev/null || true
 sleep 2
 launchctl bootstrap "$DOMAIN" "$HOME/Library/LaunchAgents/$LABEL.plist"
 launchctl kickstart -k "$DOMAIN/$LABEL"
+trap - EXIT HUP INT TERM
 sleep 6
 cat runs/heartbeat; echo
 gh run list --limit 3 --json name,conclusion,headBranch -q '.[] | "\(.headBranch): \(.conclusion)"'
