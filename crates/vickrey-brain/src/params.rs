@@ -106,6 +106,12 @@ pub struct Params {
     /// 32-36 points in the last quarter; we cash at ~40 points around
     /// auction 20 and earn 12.7 there. 0 disables.
     pub cash_min_reward: u32,
+    /// Coins kept for premium letters (J, K, Q, X, Z) from match progress
+    /// `premium_reserve_from` until the last `premium_reserve_release`
+    /// usable auctions; ordinary letters cannot bid into them. 0 disables.
+    pub premium_reserve: f64,
+    pub premium_reserve_from: f64,
+    pub premium_reserve_release: u32,
     /// Value of playing now: liquidity credit per point, times λ.
     pub liquidity: f64,
     /// Price liquidity with μ (marginal points per coin under the balance
@@ -168,6 +174,9 @@ impl Default for Params {
             deny_max_players: 2,
             min_play_len: 6,
             cash_min_reward: 0,
+            premium_reserve: 0.0,
+            premium_reserve_from: 0.4,
+            premium_reserve_release: 6,
             liquidity: 0.6,
             mu_liquidity: false,
             late_window: 0,

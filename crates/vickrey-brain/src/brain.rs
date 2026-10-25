@@ -166,6 +166,22 @@ impl Brain {
     }
 
     /// Future auctions whose letters we could still play (the last never can).
+    /// Highest bid an ordinary letter may make while the premium reserve
+    /// is active: the balance minus the reserved coins. Premium letters
+    /// (face 5+) and the closing auctions are not limited.
+    fn reserve_cap(&self, t: &Tracker, letter: Letter, balance: i64) -> i64 {
+        let p = &self.params;
+        let active = p.premium_reserve > 0.0
+            && VALUE[letter] < 5
+            && t.progress() >= p.premium_reserve_from
+            && Self::usable_future(t) + 1 > p.premium_reserve_release;
+        if active {
+            (balance - p.premium_reserve.round() as i64).max(0)
+        } else {
+            balance
+        }
+    }
+
     fn usable_future(t: &Tracker) -> u32 {
         t.bag_left.saturating_sub(1)
     }
@@ -681,7 +697,7 @@ impl Brain {
         if matches!(t.kind, AuctionKind::Vickrey) {
             amount = amount.min(t.max_opponent_balance().max(0) + 1);
         }
-        amount.clamp(0, balance)
+        amount.clamp(0, self.reserve_cap(t, letter, balance))
     }
 
     fn bid_inner(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
@@ -828,7 +844,7 @@ impl Brain {
         } else {
             amount
         };
-        let amount = amount.clamp(0, balance);
+        let amount = amount.clamp(0, self.reserve_cap(t, letter, balance));
         BidDecision {
             amount,
             value,
@@ -1295,6 +1311,32 @@ mod tests {
             assert_eq!((final_bid.amount, final_bid.p_win), (0, 0.0));
             assert_eq!(brain.last_bid, 0);
         }
+    }
+
+    #[test]
+    fn premium_reserve_caps_ordinary_letters_only() {
+        // Mid-match, 30 coins, a 20-coin reserve: an ordinary letter may bid
+        // at most 10; a premium letter is not limited by the reserve.
+        let mut t = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2], 5);
+        t.set_my_rack(Rack::from_word("UIRTEAN"));
+        t.on_participant(1, 30, 0);
+        t.on_participant(2, 90, 0);
+        for _ in 0..40 {
+            t.on_auction_open(index('E').unwrap(), 30);
+        }
+        let p = Params {
+            premium_reserve: 20.0,
+            premium_reserve_from: 0.4,
+            ..Params::default()
+        };
+        let mut b = Brain::new(p, FieldModel::default(), 6);
+        let e = index('S').unwrap();
+        assert!(b.bid(&t, e).amount <= 10, "{:?}", b.bid(&t, e));
+        assert!(b.anchor_bid(&t, e) <= 10);
+        assert_eq!(b.reserve_cap(&t, index('Q').unwrap(), 30), 30);
+        // Released in the last usable auctions.
+        t.on_auction_open(e, 3);
+        assert_eq!(b.reserve_cap(&t, e, 30), 30);
     }
 
     #[test]
