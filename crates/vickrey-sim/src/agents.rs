@@ -632,7 +632,9 @@ impl Agent for SookraClone {
         if t.auctions_seen < 28 {
             kappa *= 0.7;
         }
-        if t.bag_left < 8 {
+        // ENDGAME_SMALL_SEATS 6 (deployed 22:04 PDT Oct 24): no x2 endgame
+        // boost at tables of six seats or fewer.
+        if t.bag_left < 8 && t.n_players() > 6 {
             kappa *= 2.0;
         }
         let z: f64 = self.rng.sample(rand_distr_normal());

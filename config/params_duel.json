@@ -23,5 +23,6 @@
   "final_solve_ms": 180,
   "cash_min_reward": 45,
   "endgame_allin_auctions": 1,
-  "endgame_allin_min_value": 0.3
+  "endgame_allin_min_value": 0.3,
+  "drain_floor": 0.8
 }

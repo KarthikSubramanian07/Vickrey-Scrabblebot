@@ -106,6 +106,17 @@ pub struct Params {
     /// 32-36 points in the last quarter; we cash at ~40 points around
     /// auction 20 and earn 12.7 there. 0 disables.
     pub cash_min_reward: u32,
+    /// Lala's completion floor: when a letter lifts our best word of at
+    /// least `completion_floor_len` letters by `completion_floor_gain`
+    /// points or more, bid at least `completion_floor_mult` x the market
+    /// median for it. 0 disables.
+    pub completion_floor_mult: f64,
+    pub completion_floor_gain: f64,
+    pub completion_floor_len: usize,
+    /// Lambi Lambiii's drain floor, heads-up only: any letter with value is
+    /// bid at least `drain_floor` x the market median, so the rival pays
+    /// more for the letters it wins. 0 disables.
+    pub drain_floor: f64,
     /// Value of playing now: liquidity credit per point, times λ.
     pub liquidity: f64,
     /// Price liquidity with μ (marginal points per coin under the balance
@@ -168,6 +179,10 @@ impl Default for Params {
             deny_max_players: 2,
             min_play_len: 6,
             cash_min_reward: 0,
+            completion_floor_mult: 0.0,
+            completion_floor_gain: 12.0,
+            completion_floor_len: 6,
+            drain_floor: 0.0,
             liquidity: 0.6,
             mu_liquidity: false,
             late_window: 0,
