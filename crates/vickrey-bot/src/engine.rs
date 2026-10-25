@@ -992,6 +992,9 @@ impl MatchCtx {
 
 /// A bid rejected as late counts only if we sent it with this much time left.
 const LATE_REJECT_MIN_LEFT_MS: i64 = 400;
+/// Racks in matches with at most this many tiles left in the bag are dumped
+/// before a forced reconnect (a reconnect under lag takes 4-12 s).
+const LAG_DUMP_BAG: u32 = 12;
 
 /// Connection-health thresholds, overridable without a rebuild through the
 /// environment (`VICKREY_LAG_RTT_MS`, `VICKREY_LAG_STRIKES`, e.g. from the
@@ -1076,6 +1079,9 @@ pub struct Engine {
     /// Consecutive bids that came back slow or rejected as late.
     lag_strikes: u32,
     last_forced_reconnect: Instant,
+    /// A forced reconnect deferred so that racks dumped on the old
+    /// connection have time to leave before it is closed.
+    lag_reconnect_at: Option<Instant>,
     last_join: Option<Instant>,
     register_tries: HashMap<u64, Instant>,
     poke: bool,
@@ -1120,6 +1126,7 @@ impl Engine {
             connecting_since: now,
             lag_strikes: 0,
             last_forced_reconnect: now - Duration::from_secs(600),
+            lag_reconnect_at: None,
             last_join: None,
             register_tries: HashMap::new(),
             poke: false,
@@ -1711,6 +1718,7 @@ impl Engine {
         }
         if self.lag_strikes >= lag_strikes
             && self.state == ConnState::Ready
+            && self.lag_reconnect_at.is_none()
             && self.last_forced_reconnect.elapsed() > Duration::from_secs(60)
         {
             warn!(
@@ -1719,11 +1727,57 @@ impl Engine {
             );
             self.lag_strikes = 0;
             self.last_forced_reconnect = Instant::now();
-            self.schedule_reconnect("reducer path lagging".into());
-            // Not a failure of ours: reconnect now, without backoff.
-            self.failures = 0;
-            self.reconnect_at = Instant::now();
+            // A reconnect under lag takes 4-12 s. Live (m13846) one fired at
+            // auction 63 and the match ended before we were back: the rack
+            // was never dumped and we fell from 2nd to 5th. Cash in every
+            // rack that is near its end on the old connection first, then
+            // close it a moment later.
+            let mut dumped = 0usize;
+            if let Some(conn) = self.conn.as_ref() {
+                let env = Env {
+                    conn,
+                    tel: &self.tel,
+                    tx: &self.tx,
+                    gen: self.gen,
+                    mode: &self.opts.mode,
+                    slow_ms: self.opts.slow_ms,
+                    fast_below_ms: self.opts.fast_below_ms,
+                    dump_bag: dump_bag_for(&self.rtts),
+                };
+                for ctx in self.matches.values_mut() {
+                    if ctx.tracker.bag_left > LAG_DUMP_BAG {
+                        continue;
+                    }
+                    let words = ctx.brain.final_plays(&ctx.tracker.my_rack);
+                    if words.is_empty() {
+                        continue;
+                    }
+                    let aid = ctx.open.as_ref().map(|o| o.auction_id).unwrap_or(0);
+                    warn!(
+                        "m{} dumping [{}] before the reconnect (bag {})",
+                        ctx.match_id,
+                        words.join(" "),
+                        ctx.tracker.bag_left
+                    );
+                    for w in &words {
+                        ctx.submit_word(&env, aid, w, "final");
+                    }
+                    dumped += words.len();
+                }
+            }
+            if dumped > 0 {
+                self.lag_reconnect_at = Some(Instant::now() + Duration::from_millis(1500));
+            } else {
+                self.force_reconnect();
+            }
         }
+    }
+
+    /// Replace the connection now: not a failure of ours, so no backoff.
+    fn force_reconnect(&mut self) {
+        self.schedule_reconnect("reducer path lagging".into());
+        self.failures = 0;
+        self.reconnect_at = Instant::now();
     }
 
     fn note_rtt(&mut self, rtt: f64) {
@@ -2085,6 +2139,12 @@ impl Engine {
 
     fn tick(&mut self) -> Result<()> {
         let now = Instant::now();
+        if self.lag_reconnect_at.is_some_and(|t| now >= t) {
+            self.lag_reconnect_at = None;
+            if self.state == ConnState::Ready {
+                self.force_reconnect();
+            }
+        }
         if self.state == ConnState::Down && now >= self.reconnect_at {
             if self.failures > self.opts.max_reconnect_failures {
                 bail!(
