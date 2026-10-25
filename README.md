@@ -20,6 +20,7 @@ Named for William Vickrey, the Nobel laureate whose second-price auction runs ev
 - An instant *anchor* bid sent the moment an auction opens. Under server lag, bids that left with 800 ms to spare were rejected as late; ghost losses fell from 2.4 per match to 0.006.
 - A connection health check that replaces a lagging connection, after playing out any near-finished rack first.
 - Holding mid-match words worth under 45 points unless short of coins, which is what the league leaders do: +0.5 Swiss points per match and +66 to +70 points per heads-up game in paired simulation.
+- After the tournament, Lambi Lambiii's published *drain floor* for heads-up play: bid every useful letter at 0.8x the going price so the rival pays more for what it wins. +119 to +123 points per heads-up game against the leader clones.
 
 **What did not** (each lost to the champion in paired simulation against calibrated clones of the leaders): spending harder, premium-letter caps and a premium-coin reserve, cashing shorter words, earlier cash-ins, income-factor changes, volume floors at the market price, a longer premium valuation horizon, and Lala's completion floor.
 
