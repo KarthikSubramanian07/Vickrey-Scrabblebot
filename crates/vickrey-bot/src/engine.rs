@@ -990,12 +990,31 @@ impl MatchCtx {
     }
 }
 
-/// A bid round trip above this is a strike against the connection.
-const LAG_RTT_MS: f64 = 500.0;
-/// Strikes in a row that replace the connection.
-const LAG_STRIKES: u32 = 3;
 /// A bid rejected as late counts only if we sent it with this much time left.
 const LATE_REJECT_MIN_LEFT_MS: i64 = 400;
+
+/// Connection-health thresholds, overridable without a rebuild through the
+/// environment (`VICKREY_LAG_RTT_MS`, `VICKREY_LAG_STRIKES`, e.g. from the
+/// launchd plist). Bids are submitted by every bot in the same instant an
+/// auction opens, so their round trips run well above word round trips even
+/// on a healthy connection: live, bids took 500-600 ms while words took 160
+/// ms and nothing was rejected. Rejections began near 850 ms.
+fn lag_thresholds() -> (f64, u32) {
+    static T: std::sync::OnceLock<(f64, u32)> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        let rtt = std::env::var("VICKREY_LAG_RTT_MS")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(800.0);
+        let strikes = std::env::var("VICKREY_LAG_STRIKES")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(3);
+        (rtt, strikes)
+    })
+}
 
 /// How early to dump the final partition. The server runs reducers one at
 /// a time per database; at peak load a call can take seconds, and a dump
@@ -1684,12 +1703,13 @@ impl Engine {
     /// are slow or rejected as late force a fresh connection, at most once a
     /// minute; matches are rebuilt from the server on reconnect.
     fn lag_check(&mut self, rtt: f64, rejected_late: bool) {
-        if rtt > LAG_RTT_MS || rejected_late {
+        let (lag_rtt_ms, lag_strikes) = lag_thresholds();
+        if rtt > lag_rtt_ms || rejected_late {
             self.lag_strikes += 1;
         } else {
             self.lag_strikes = 0;
         }
-        if self.lag_strikes >= LAG_STRIKES
+        if self.lag_strikes >= lag_strikes
             && self.state == ConnState::Ready
             && self.last_forced_reconnect.elapsed() > Duration::from_secs(60)
         {
