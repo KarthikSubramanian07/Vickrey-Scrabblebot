@@ -721,6 +721,146 @@ impl Agent for GauchoClone {
     }
 }
 
+// ------------------------------------------------ data-fitted live leader
+
+/// One letter class's fitted winning-bid line:
+/// `a + b·face + c·progress + d·balance/100`, residual sd.
+#[derive(Clone, Copy, Debug)]
+pub struct ClassFit {
+    pub a: f64,
+    pub b: f64,
+    pub c: f64,
+    pub d: f64,
+    pub sd: f64,
+}
+
+impl ClassFit {
+    fn at(&self, face: f64, progress: f64, balance: f64) -> f64 {
+        self.a + self.b * face + self.c * progress + self.d * balance / 100.0
+    }
+}
+
+/// Lambi Lambiii, the live leader at 02:35 UTC Oct 25 (mean place 1.74,
+/// 58% wins, 101 points, 14 letters and 8.8 coins left per match), fitted
+/// on its winning bids by letter class (runs/research/rivals.md, rival
+/// watch 4). It bids a flat ~13.5 on vowels and 1-point consonants whatever
+/// the time or its balance, 5.5 + 5.2·face on 2-4 point letters, and rarely
+/// buys premiums. It cashes words steadily through the second half (0.37 /
+/// 0.58 / 1.05 / 1.26 plays per quarter, 55% of them 7+) and ends with an
+/// empty rack instead of relying on a final dump. `VICKREY_LAMBI_SCALE`
+/// scales its bids, since winning-bid fits overstate a bot's typical bid.
+pub struct LambiClone {
+    label: String,
+    rng: SmallRng,
+    vowel: ClassFit,
+    cons1: ClassFit,
+    mid: ClassFit,
+    prem: ClassFit,
+    scale: f64,
+}
+
+impl LambiClone {
+    pub fn new(label: &str, seed: u64) -> Self {
+        let scale = std::env::var("VICKREY_LAMBI_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(1.0);
+        LambiClone {
+            label: label.to_string(),
+            rng: SmallRng::seed_from_u64(seed),
+            vowel: ClassFit {
+                a: 13.7,
+                b: 0.0,
+                c: 2.2,
+                d: -2.3,
+                sd: 4.2,
+            },
+            cons1: ClassFit {
+                a: 12.9,
+                b: 0.0,
+                c: 4.0,
+                d: -4.0,
+                sd: 2.9,
+            },
+            mid: ClassFit {
+                a: 5.5,
+                b: 5.22,
+                c: 2.4,
+                d: -0.3,
+                sd: 4.3,
+            },
+            // No premium fit (it bought 0.42 a match); winning bids averaged
+            // 41 at a mean face of ~8.5.
+            prem: ClassFit {
+                a: 10.0,
+                b: 3.6,
+                c: 2.0,
+                d: 0.0,
+                sd: 6.0,
+            },
+            scale,
+        }
+    }
+}
+
+impl Agent for LambiClone {
+    fn name(&self) -> String {
+        self.label.clone()
+    }
+
+    fn bid(&mut self, t: &Tracker, letter: Letter) -> i64 {
+        let balance = t.my_balance().max(0);
+        if t.is_last_auction() || balance == 0 {
+            return 0;
+        }
+        let face = VALUE[letter] as f64;
+        let fit = if VOWELS.contains(&letter) {
+            self.vowel
+        } else if face <= 1.0 {
+            self.cons1
+        } else if face <= 4.0 {
+            self.mid
+        } else {
+            self.prem
+        };
+        let z: f64 = self.rng.sample(rand_distr_normal());
+        let mut b = fit.at(face, t.progress(), balance as f64) + fit.sd * z;
+        // It does look at its rack: a letter that adds nothing is bid low.
+        let d = dictionary();
+        let rack = t.my_rack;
+        if rack.len() >= 6 && potential(d, &rack.with(letter)) <= potential(d, &rack) {
+            b *= 0.6;
+        }
+        ((self.scale * b).round() as i64).clamp(0, balance)
+    }
+
+    fn plays(&mut self, t: &Tracker) -> Vec<String> {
+        let d = dictionary();
+        let mut r = t.my_rack;
+        let mut out = Vec::new();
+        let p = t.progress();
+        // Bingos on sight; 6+ in the second half; anything in the last six
+        // auctions, so the rack is empty when the bag runs out.
+        let min_len = if t.bag_left <= 6 {
+            2
+        } else if p >= 0.5 {
+            6
+        } else {
+            7
+        };
+        while let Some(s) = d.best_word(&r, min_len) {
+            r.sub(&s.rack);
+            out.push(s.word.to_string());
+        }
+        out
+    }
+
+    fn final_plays(&mut self, t: &Tracker) -> Vec<String> {
+        dump_all(&t.my_rack)
+    }
+}
+
 // ------------------------------------------------------------ our brain
 
 pub struct Vickrey {
