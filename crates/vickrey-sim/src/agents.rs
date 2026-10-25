@@ -589,7 +589,8 @@ impl Agent for NijelloClone {
 /// ×0.7 for the first 28 auctions (0.55 until 22:48 UTC Oct 24), ×2 once
 /// fewer than 8 tiles remain. Holds
 /// every word for the final flush (last three auctions) except a liquidity
-/// word when the balance drops under 15.
+/// word when the balance drops under 15, and bids its whole balance on the
+/// last playable auction (`ALLIN_LAST`, deployed for the tournament).
 pub struct SookraClone {
     label: String,
     rng: SmallRng,
@@ -613,6 +614,11 @@ impl Agent for SookraClone {
         let balance = t.my_balance().max(0);
         if t.is_last_auction() || balance == 0 {
             return 0;
+        }
+        // ALLIN_LAST (deployed 20:39 PDT Oct 24): the whole balance on the
+        // last playable auction.
+        if t.bag_left == 1 {
+            return balance;
         }
         let d = dictionary();
         let rack = t.my_rack;

@@ -1,0 +1,21 @@
+[
+  {
+    "name": "completion premium 0.25 with a lower trigger (completion_min_value 5; the min-8 version fired on 1 of 53 bids)",
+    "patch": {
+      "completion_min_value": 5.0,
+      "completion_premium": 0.25
+    }
+  },
+  {
+    "name": "starvation cash-ins need 6+ letters (all 65 of our mid-match 5-6 letter plays were starvation exits, 30 before auction 51)",
+    "patch": {
+      "starve_min_play_len": 6
+    }
+  },
+  {
+    "name": "exact endgame valuation (exact solver when no futures, racks <18)",
+    "patch": {
+      "exact_terminal_max": 18
+    }
+  }
+]
