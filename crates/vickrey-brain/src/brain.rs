@@ -713,6 +713,14 @@ impl Brain {
             let mut best: Option<(f64, u32)> = None;
             for &i in &cands {
                 let s = self.dict.sig(i);
+                // Hold cheap words for a richer one unless broke or closing.
+                if p.cash_min_reward > 0
+                    && !late
+                    && !starved
+                    && (s.reward as u32) < p.cash_min_reward
+                {
+                    continue;
+                }
                 let mut rest = rack;
                 rest.sub(&s.rack);
                 let gain = s.reward as f64 * (1.0 + p.liquidity * mu) + eval(self, &rest) - hold;
@@ -773,13 +781,39 @@ pub fn letter_prior() -> &'static [f64; ALPHABET] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vickrey_core::index;
+    use vickrey_core::{index, word_reward};
 
     fn tracker_with(rack: &str, bag_left: u32) -> Tracker {
         let mut t = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 5);
         t.set_my_rack(Rack::from_word(rack));
         t.on_auction_open(index('E').unwrap(), bag_left);
         t
+    }
+
+    #[test]
+    fn cash_min_reward_holds_cheap_words_but_not_when_starved() {
+        // A 7-letter word worth under 45 points, mid-match, plenty of coins.
+        let mut t = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 5);
+        t.set_my_rack(Rack::from_word("RETAINS"));
+        t.on_auction_open(index('E').unwrap(), 40);
+        t.on_participant(1, 80, 0);
+        let rich = Params {
+            cash_min_reward: 45,
+            ..Params::default()
+        };
+        let mut b = Brain::new(rich.clone(), FieldModel::default(), 2);
+        assert!(
+            b.plays(&t).iter().all(|w| word_reward(w) >= 45),
+            "{:?}",
+            b.plays(&t)
+        );
+        // Broke: the threshold no longer applies.
+        t.on_participant(1, 3, 0);
+        let mut b = Brain::new(rich, FieldModel::default(), 2);
+        let base = Brain::new(Params::default(), FieldModel::default(), 2)
+            .plays(&t)
+            .len();
+        assert_eq!(b.plays(&t).len(), base);
     }
 
     #[test]
