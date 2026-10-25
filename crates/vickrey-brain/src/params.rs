@@ -22,6 +22,12 @@ pub struct Params {
     pub exact_terminal_max: usize,
     /// Node budget per terminal solve inside the Monte Carlo (0 = greedy).
     pub solve_nodes: u64,
+    /// Alternative first words tried before a greedy terminal dump (0 = off).
+    /// Capped at four to bound per-sample work; only used with solve_nodes = 0.
+    pub terminal_rollout_candidates: usize,
+    /// Discarding an added tile preserves the baseline partition in every
+    /// sampled future, preventing greedy regressions from canceling gains.
+    pub monotone_marginals: bool,
     /// Scales how many future letters we expect to win.
     pub win_share_scale: f64,
     /// Extra letters sampled per expected win, standing in for our freedom
@@ -65,6 +71,14 @@ pub struct Params {
     /// worth at least `endgame_allin_min_value` points (0 = off).
     pub endgame_allin_auctions: u32,
     pub endgame_allin_min_value: f64,
+    /// Refine the bid by paired rank rollouts with at most this many
+    /// playable auctions left. 0 disables; the planner is capped at three.
+    pub endgame_rollout_auctions: u32,
+    /// Maximum paired hidden-state samples for the endgame planner.
+    pub endgame_rollout_samples: usize,
+    /// Milliseconds reserved for endgame refinement within the bid deadline.
+    /// The planner is additionally capped at 30 ms.
+    pub endgame_rollout_budget_ms: u64,
     /// Cap bids on J/K/Q/X/Z at this multiple of the market median (0 = off).
     pub premium_cap_mult: f64,
     /// Apply the premium cap only while match progress is below this (1.0 = always).
@@ -123,6 +137,8 @@ impl Default for Params {
             work_budget: 70_000,
             exact_terminal_max: 0,
             solve_nodes: 0,
+            terminal_rollout_candidates: 0,
+            monotone_marginals: false,
             win_share_scale: 1.0,
             choice_mult: 1.6,
             premium_choice_mult: 1.0,
@@ -140,6 +156,9 @@ impl Default for Params {
             volume_min_value: 2.0,
             endgame_allin_auctions: 0,
             endgame_allin_min_value: 3.0,
+            endgame_rollout_auctions: 0,
+            endgame_rollout_samples: 12,
+            endgame_rollout_budget_ms: 30,
             premium_cap_mult: 0.0,
             premium_cap_until: 1.0,
             completion_premium: 0.0,

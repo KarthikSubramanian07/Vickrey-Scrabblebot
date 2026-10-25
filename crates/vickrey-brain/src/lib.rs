@@ -9,6 +9,7 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod brain;
+pub mod endgame;
 pub mod market;
 pub mod params;
 pub mod tracker;

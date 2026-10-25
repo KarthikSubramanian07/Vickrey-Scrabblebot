@@ -696,8 +696,9 @@ impl MatchCtx {
             return;
         }
         let old = rec.bid.as_ref().map(|b| b.amount).unwrap_or(0);
+        let floor = i64::from(rec.submitted || rec.anchor.is_some());
         let t = Instant::now();
-        let d = self.brain.bid(&self.tracker, l);
+        let d = self.brain.bid_with_floor(&self.tracker, l, floor);
         let amount = d.amount.min(self.tracker.my_balance()).max(0);
         let rack = self.tracker.my_rack.to_string();
         info!(
@@ -715,12 +716,12 @@ impl MatchCtx {
             });
             rec.rebid = true;
         }
-        if amount != old {
+        if amount != old && amount > 0 {
             let tx = env.tx.clone();
             let sent = Instant::now();
             let (gen, match_id) = (env.gen, self.match_id);
-            // A zero bid can't withdraw a sealed bid, so keep a token 1 instead.
-            let send = amount.max(1);
+            // The brain already accounted for any nonwithdrawable token bid.
+            let send = amount;
             let _ = env
                 .conn
                 .reducers
@@ -909,7 +910,9 @@ impl MatchCtx {
                 saved
             });
             let t_bid = Instant::now();
-            let d = self.brain.bid(&self.tracker, l);
+            let d = self
+                .brain
+                .bid_with_floor(&self.tracker, l, i64::from(anchor > 0));
             rec.bid_ms = ms(t_bid);
             if let Some((params, multi, duel)) = saved {
                 self.brain.params = params;

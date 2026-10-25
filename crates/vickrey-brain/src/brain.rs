@@ -19,6 +19,7 @@
 //! plus that liquidity beats the expected value of holding its letters.
 //! When the last auction opens we dump the exact best partition.
 
+use crate::endgame::{plan, PlanConfig};
 use crate::market::{BidDist, FieldModel, Market};
 use crate::params::Params;
 use crate::tracker::{AuctionKind, Tracker};
@@ -122,7 +123,35 @@ impl Brain {
 
     fn terminal(&self, rack: &Rack) -> f64 {
         if self.params.solve_nodes == 0 {
-            vickrey_core::solver::greedy(self.dict, rack).score as f64
+            let greedy = vickrey_core::solver::greedy(self.dict, rack);
+            let alternatives = self.params.terminal_rollout_candidates.min(4);
+            if alternatives == 0 || greedy.words.is_empty() {
+                return greedy.score as f64;
+            }
+            // A slightly better first word can strand valuable letters. Try
+            // a bounded number of other first words, then finish greedily.
+            // Every result is a feasible partition; retain the original dump
+            // as a lower bound rather than replacing it with a worse rollout.
+            let mut candidates = self.dict.candidates(rack, 2);
+            candidates.retain(|&i| i != greedy.words[0]);
+            let rank = |&i: &u32| {
+                let s = self.dict.sig(i);
+                (std::cmp::Reverse(s.reward), s.len, i)
+            };
+            if candidates.len() > alternatives {
+                candidates.select_nth_unstable_by_key(alternatives, rank);
+                candidates.truncate(alternatives);
+            }
+            candidates.sort_unstable_by_key(rank);
+            let mut best = greedy.score;
+            for &i in candidates.iter().take(alternatives) {
+                let s = self.dict.sig(i);
+                let mut rest = *rack;
+                rest.sub(&s.rack);
+                best = best
+                    .max(s.reward as u32 + vickrey_core::solver::greedy(self.dict, &rest).score);
+            }
+            best as f64
         } else {
             Solver::with_budget(self.dict, self.params.solve_nodes)
                 .solve(rack)
@@ -241,13 +270,24 @@ impl Brain {
         for f in &futures {
             let mut r = *rack;
             r.plus(f);
-            base += eval(self, &r);
+            let baseline = eval(self, &r);
+            base += baseline;
             for (j, &l) in letters.iter().enumerate() {
-                with[j] += eval(self, &r.with(l));
+                let added = eval(self, &r.with(l));
+                with[j] += if self.params.monotone_marginals {
+                    added.max(baseline)
+                } else {
+                    added
+                };
             }
             n += 1;
             let len = r.len() as u64 + 1;
-            used += len * len * (letters.len() as u64 + 1);
+            let rollout_work = if self.params.solve_nodes == 0 {
+                1 + self.params.terminal_rollout_candidates.min(4) as u64
+            } else {
+                1
+            };
+            used += len * len * (letters.len() as u64 + 1) * rollout_work;
             if n >= 3
                 && (used >= work
                     || self
@@ -366,13 +406,50 @@ impl Brain {
 
     /// λ that makes expected spend over `n` auctions match `budget`, with
     /// every bid capped at `cap` coins.
-    fn solve_lambda(&self, segs: &[Segment], cap: f64, budget: f64) -> f64 {
+    fn solve_lambda(&self, segs: &[Segment], cap: f64, budget: f64, kind: AuctionKind) -> f64 {
         let p = &self.params;
+        // Cache CDF evaluations once: first-price shading searches integer
+        // bids at each bisection step, but their win probabilities are fixed.
+        let grids: Vec<Vec<Vec<(i64, f64)>>> =
+            if matches!(kind, AuctionKind::FirstPrice) && p.first_price_shade {
+                segs.iter()
+                    .map(|(_, mix)| {
+                        mix.iter()
+                            .map(|(_, _, d)| {
+                                (1..=cap.floor() as i64)
+                                    .map(|b| (b, d.p_win(b as f64)))
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
         let spend = |lam: f64| -> f64 {
             segs.iter()
-                .map(|(n, mix)| {
+                .enumerate()
+                .map(|(segment, (n, mix))| {
                     mix.iter()
-                        .map(|(w, v, d)| w * d.expected_pay_vickrey((v / lam).min(cap)))
+                        .enumerate()
+                        .map(|(letter, (w, v, d))| {
+                            let truthful = (v / lam).min(cap);
+                            let payment = match kind {
+                                AuctionKind::Vickrey => d.expected_pay_vickrey(truthful),
+                                AuctionKind::FirstPrice => {
+                                    let bid = if p.first_price_shade {
+                                        Self::first_price_bid_from(
+                                            truthful,
+                                            grids[segment][letter].iter().copied(),
+                                        ) as f64
+                                    } else {
+                                        truthful.floor()
+                                    };
+                                    bid * d.p_win(bid)
+                                }
+                            };
+                            w * payment
+                        })
                         .sum::<f64>()
                         * n
                 })
@@ -395,15 +472,30 @@ impl Brain {
                 b = m;
             }
         }
-        (0.5 * (a + b)).exp()
+        match kind {
+            AuctionKind::Vickrey => (0.5 * (a + b)).exp(),
+            // Integer first-price bids make spend a step function. Keep
+            // the affordable side of the bracket instead of crossing a jump.
+            AuctionKind::FirstPrice => b.exp(),
+        }
     }
 
     /// Expected points bought over `n` auctions at shadow price `lam` with bids capped at `cap`.
-    fn expected_points(segs: &[Segment], lam: f64, cap: f64) -> f64 {
+    fn expected_points(&self, segs: &[Segment], lam: f64, cap: f64, kind: AuctionKind) -> f64 {
         segs.iter()
             .map(|(n, mix)| {
                 mix.iter()
-                    .map(|(w, v, d)| w * v * d.p_win((v / lam).min(cap)))
+                    .map(|(w, v, d)| {
+                        let truthful = (v / lam).min(cap);
+                        let bid = match kind {
+                            AuctionKind::Vickrey => truthful,
+                            AuctionKind::FirstPrice if self.params.first_price_shade => {
+                                Self::first_price_bid(truthful, d) as f64
+                            }
+                            AuctionKind::FirstPrice => truthful.floor(),
+                        };
+                        w * v * d.p_win(bid)
+                    })
                     .sum::<f64>()
                     * n
             })
@@ -419,7 +511,7 @@ impl Brain {
     fn pace(&mut self, t: &Tracker) -> f64 {
         let balance = t.my_balance().max(0) as f64;
         let segs = self.segments(t);
-        self.solve_lambda(&segs, balance, self.budget_for(t, balance))
+        self.solve_lambda(&segs, balance, self.budget_for(t, balance), t.kind)
     }
 
     /// Marginal points from one more coin right now (μ). Unlike the pacing
@@ -435,17 +527,113 @@ impl Brain {
         let delta = (0.25 * b0).max(10.0);
         let b1 = b0 + delta;
         let segs = self.segments(t);
-        let l0 = self.solve_lambda(&segs, b0, self.budget_for(t, b0));
-        let l1 = self.solve_lambda(&segs, b1, self.budget_for(t, b1));
-        let gain = Self::expected_points(&segs, l1, b1) - Self::expected_points(&segs, l0, b0);
+        let l0 = self.solve_lambda(&segs, b0, self.budget_for(t, b0), t.kind);
+        let l1 = self.solve_lambda(&segs, b1, self.budget_for(t, b1), t.kind);
+        let gain = self.expected_points(&segs, l1, b1, t.kind)
+            - self.expected_points(&segs, l0, b0, t.kind);
         (gain / delta).clamp(0.0, 3.0)
     }
 
     /// Decide our bid on the open auction for `letter`.
     pub fn bid(&mut self, t: &Tracker, letter: Letter) -> BidDecision {
-        let d = self.bid_inner(t, letter);
+        self.bid_with_floor(t, letter, 0)
+    }
+
+    /// Refine an executable bid when a previously submitted sealed bid can
+    /// only be reduced to a positive token amount, rather than withdrawn.
+    pub fn bid_with_floor(&mut self, t: &Tracker, letter: Letter, min_bid: i64) -> BidDecision {
+        let mut d = self.bid_inner(t, letter);
+        let floor = if t.is_last_auction() {
+            0
+        } else {
+            min_bid.clamp(0, t.my_balance().max(0))
+        };
+        d.amount = d.amount.max(floor);
+        let baseline = d.amount;
+        self.refine_endgame_bid(t, letter, &mut d);
+        if d.amount < floor {
+            // A planner candidate below the executable floor cannot replace
+            // the compared baseline. Retain that baseline instead.
+            d.amount = baseline;
+        }
+        d.p_win = self.dist(t, letter).p_win(d.amount as f64);
         self.last_bid = d.amount;
         d
+    }
+
+    fn refine_endgame_bid(&mut self, t: &Tracker, letter: Letter, decision: &mut BidDecision) {
+        let max_bag_left = self.params.endgame_rollout_auctions.min(3);
+        if max_bag_left == 0
+            || t.is_last_auction()
+            || t.bag_left > max_bag_left
+            || t.my_balance() <= 0
+            || (t.bag_left == 1
+                && self.params.endgame_allin_auctions > 0
+                && self.params.endgame_allin_min_value <= 0.0)
+        {
+            return;
+        }
+        let mut budget_ms = self.params.endgame_rollout_budget_ms.min(30);
+        if let Some(deadline) = self.deadline {
+            budget_ms = budget_ms.min(
+                deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis() as u64,
+            );
+        }
+        if budget_ms == 0 || self.params.endgame_rollout_samples == 0 {
+            return;
+        }
+        let cfg = PlanConfig {
+            max_bag_left,
+            max_samples: self.params.endgame_rollout_samples.min(64),
+            budget_ms,
+            ..PlanConfig::default()
+        };
+        let Some(result) = plan(
+            t,
+            letter,
+            decision.amount,
+            &self.market,
+            self.rng.clone().gen(),
+            &cfg,
+        ) else {
+            return;
+        };
+        let mut amount = result.bid.clamp(0, t.my_balance());
+        if matches!(t.kind, AuctionKind::Vickrey) {
+            amount = amount.min(t.max_opponent_balance().max(0).saturating_add(1));
+        }
+        if self.params.premium_cap_mult > 0.0
+            && VALUE[letter] >= 5
+            && t.progress() < self.params.premium_cap_until
+        {
+            let cap = (self.params.premium_cap_mult * self.dist(t, letter).median).ceil() as i64;
+            if amount > cap.max(1) {
+                // A different capped bid was not the candidate we evaluated.
+                return;
+            }
+        }
+        decision.amount = amount;
+        decision.p_win = self.dist(t, letter).p_win(amount as f64);
+    }
+
+    fn first_price_bid_from(truthful: f64, bids: impl Iterator<Item = (i64, f64)>) -> i64 {
+        let mut best = (0.0, 0i64);
+        for (bid, probability) in bids.take_while(|(b, _)| *b <= truthful.floor() as i64) {
+            let surplus = (truthful - bid as f64) * probability;
+            if surplus > best.0 {
+                best = (surplus, bid);
+            }
+        }
+        best.1
+    }
+
+    fn first_price_bid(truthful: f64, dist: &BidDist) -> i64 {
+        Self::first_price_bid_from(
+            truthful,
+            (1..=truthful.floor() as i64).map(|b| (b, dist.p_win(b as f64))),
+        )
     }
 
     /// A near-instant bid for the moment an auction opens: the cached
@@ -535,6 +723,25 @@ impl Brain {
         }
         let lambda = self.pace(t);
         self.last_lambda = lambda;
+        // Explicit opt-in: on the final playable auction coins have no
+        // remaining use. A zero threshold also allows buying solely to deny
+        // a rival's extension, even when this tile adds no points to our rack.
+        if t.bag_left == 1
+            && self.params.endgame_allin_auctions > 0
+            && self.params.endgame_allin_min_value <= 0.0
+        {
+            let amount = if matches!(t.kind, AuctionKind::Vickrey) {
+                balance.min(t.max_opponent_balance().max(0).saturating_add(1))
+            } else {
+                balance
+            };
+            return BidDecision {
+                amount,
+                value,
+                lambda,
+                p_win: self.dist(t, letter).p_win(amount as f64),
+            };
+        }
         if value < self.params.min_value {
             let amount = if value >= self.params.cheap_grab_value.min(self.params.min_value)
                 && value > 0.0
@@ -583,14 +790,7 @@ impl Brain {
             AuctionKind::Vickrey => truthful.floor() as i64,
             AuctionKind::FirstPrice if self.params.first_price_shade => {
                 // argmax_b (v/λ − b) · P(win | b)
-                let mut best = (0.0, 0i64);
-                for b in 1..=(truthful.floor() as i64) {
-                    let s = (truthful - b as f64) * d.p_win(b as f64);
-                    if s > best.0 {
-                        best = (s, b);
-                    }
-                }
-                best.1
+                Self::first_price_bid(truthful, &d)
             }
             AuctionKind::FirstPrice => truthful.floor() as i64,
         };
@@ -641,14 +841,23 @@ impl Brain {
     pub fn observe_result(&mut self, t: &Tracker, letter: Letter, winner: Option<u64>, paid: i64) {
         let we_won = winner == Some(t.my_id);
         if winner.is_some() {
-            self.market.observe(
-                letter,
-                t.progress(),
-                paid,
-                we_won,
-                t.n_players().saturating_sub(1),
-                self.last_bid,
-            );
+            match t.kind {
+                AuctionKind::Vickrey => self.market.observe(
+                    letter,
+                    t.progress(),
+                    paid,
+                    we_won,
+                    t.n_players().saturating_sub(1),
+                    self.last_bid,
+                ),
+                AuctionKind::FirstPrice => self.market.observe_first_price(
+                    letter,
+                    t.progress(),
+                    paid,
+                    we_won,
+                    t.n_players().saturating_sub(1),
+                ),
+            }
         }
     }
 
@@ -788,6 +997,304 @@ mod tests {
         t.set_my_rack(Rack::from_word(rack));
         t.on_auction_open(index('E').unwrap(), bag_left);
         t
+    }
+
+    #[test]
+    fn rollout_recovers_the_partition_hidden_by_a_greedy_switch() {
+        // H tempts greedy into a worse first word even though it can be
+        // discarded. Two alternative first words recover the exact value.
+        let rack = Rack::from_word("DDEGILLORTUX");
+        let next = rack.with(index('H').unwrap());
+        let greedy = Brain::new(Params::default(), FieldModel::default(), 1);
+        let mut rollout = Brain::new(
+            Params {
+                terminal_rollout_candidates: 2,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        assert_eq!(
+            (greedy.terminal(&rack), greedy.terminal(&next)),
+            (47.0, 42.0)
+        );
+        assert_eq!(
+            (rollout.terminal(&rack), rollout.terminal(&next)),
+            (49.0, 55.0)
+        );
+        assert_eq!(rollout.terminal(&rack), rollout.terminal_exact(&rack));
+        assert_eq!(rollout.terminal(&next), rollout.terminal_exact(&next));
+        // The deadline is checked between completed samples. Expiring it
+        // within a baseline/addition pair must not change terminal effort.
+        rollout.deadline = Some(std::time::Instant::now());
+        assert_eq!(
+            (rollout.terminal(&rack), rollout.terminal(&next)),
+            (49.0, 55.0)
+        );
+    }
+
+    #[test]
+    fn monotone_samples_do_not_let_greedy_losses_cancel_real_gains() {
+        let rack = Rack::from_word("DDEILLORTUX");
+        let mut t = tracker_with("DDEILLORTUX", 2);
+        // Only A and G remain unseen. With G, greedy scores 47 before H
+        // and 42 after H; that loss is impossible because H can be ignored.
+        // With A, H improves the greedy score by ten points.
+        let unseen = Rack::from_word("AG");
+        t.revealed = Rack(vickrey_core::BAG);
+        t.revealed.sub(&rack);
+        t.revealed.sub(&unseen);
+        assert_eq!(t.unseen(), unseen);
+        let mut plain = Brain::new(Params::default(), FieldModel::default(), 1);
+        let mut monotone = Brain::new(
+            Params {
+                monotone_marginals: true,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        assert_eq!(plain.future_size(&t), 1);
+        let h = index('H').unwrap();
+        let (base, raw) = plain.marginal_values(&t, &rack, &[h], 16);
+        let (same_base, corrected) = monotone.marginal_values(&t, &rack, &[h], 16);
+        assert_eq!(base, same_base);
+        assert_eq!(base, 48.5);
+        assert_eq!(raw, vec![0.625]);
+        assert_eq!(corrected, vec![3.75]);
+    }
+
+    #[test]
+    fn first_price_pacing_budgets_own_bid_instead_of_the_runner_up() {
+        let brain = Brain::new(
+            Params {
+                first_price_shade: false,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        let dist = BidDist {
+            median: 8.0,
+            sigma: 0.3,
+            cap: 20.0,
+            p_none: 0.0,
+        };
+        let segs = vec![(40.0, vec![(1.0, 20.0, dist)])];
+        let vickrey = brain.solve_lambda(&segs, 50.0, 200.0, AuctionKind::Vickrey);
+        let first = brain.solve_lambda(&segs, 50.0, 200.0, AuctionKind::FirstPrice);
+        let richer = brain.solve_lambda(&segs, 50.0, 400.0, AuctionKind::FirstPrice);
+        let bid = (20.0 / first).floor();
+        let actual_spend = 40.0 * bid * dist.p_win(bid);
+        let upper_spend = 40.0 * (bid + 1.0) * dist.p_win(bid + 1.0);
+        // Using the Vickrey multiplier in a first-price game overspends:
+        // the winner pays its own bid rather than the rival's lower bid.
+        let old_bid = (20.0 / vickrey).floor();
+        assert!(40.0 * old_bid * dist.p_win(old_bid) > 200.0);
+        assert!(first > vickrey);
+        assert!(richer < first);
+        assert!(actual_spend <= 200.0 + 1e-6);
+        assert!(upper_spend >= 200.0 - 1e-6);
+    }
+
+    #[test]
+    fn first_price_pacing_and_point_estimate_use_the_shaded_bid() {
+        let brain = Brain::new(Params::default(), FieldModel::default(), 1);
+        let dist = BidDist {
+            median: 8.0,
+            sigma: 0.3,
+            cap: 20.0,
+            p_none: 0.0,
+        };
+        let segs = vec![(40.0, vec![(1.0, 20.0, dist)])];
+        let lam = brain.solve_lambda(&segs, 50.0, 200.0, AuctionKind::FirstPrice);
+        let truth = (20.0 / lam).min(50.0);
+        let bid = Brain::first_price_bid(truth, &dist);
+        let spend = 40.0 * bid as f64 * dist.p_win(bid as f64);
+        assert!((bid as f64) < truth);
+        assert!(spend <= 200.0 + 1e-6);
+        assert!(40.0 * (bid + 1) as f64 * dist.p_win((bid + 1) as f64) >= 200.0 - 1e-6);
+        assert_eq!(
+            brain.expected_points(&segs, lam, 50.0, AuctionKind::FirstPrice),
+            40.0 * 20.0 * dist.p_win(bid as f64)
+        );
+    }
+
+    #[test]
+    fn market_observations_use_the_auction_payment_rule() {
+        let mut tracker = tracker_with("RETAINS", 40);
+        let mut first = Brain::new(Params::default(), FieldModel::default(), 1);
+        let mut second = Brain::new(Params::default(), FieldModel::default(), 1);
+        let letter = index('A').unwrap();
+        // Paying 100 after winning a first-price auction says nothing hot
+        // about opponents: it is our own bid. In Vickrey it is their maximum.
+        tracker.kind = AuctionKind::FirstPrice;
+        first.observe_result(&tracker, letter, Some(tracker.my_id), 100);
+        tracker.kind = AuctionKind::Vickrey;
+        second.observe_result(&tracker, letter, Some(tracker.my_id), 100);
+        assert_eq!(first.market.heat, 1.0);
+        assert!(second.market.heat > 1.0);
+    }
+
+    #[test]
+    fn endgame_abstention_preserves_the_bid_and_valuation_rng() {
+        let mut brain = Brain::new(
+            Params {
+                endgame_rollout_auctions: 3,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        let tracker = tracker_with("RETAINS", 2);
+        let mut decision = BidDecision {
+            amount: 17,
+            value: 10.0,
+            lambda: 0.3,
+            p_win: 0.5,
+        };
+        brain.deadline = Some(std::time::Instant::now());
+        let mut untouched_rng = brain.rng.clone();
+        brain.refine_endgame_bid(&tracker, index('S').unwrap(), &mut decision);
+        assert_eq!(decision.amount, 17);
+        assert_eq!(decision.p_win, 0.5);
+        // No hidden-state rollout was started after the bidding cutoff.
+        assert_eq!(brain.rng.gen::<u64>(), untouched_rng.gen::<u64>());
+
+        // An attempted plan with too few complete pairs also must leave the
+        // random stream used by later valuations unchanged.
+        brain.deadline = None;
+        brain.params.endgame_rollout_samples = 1;
+        let mut untouched_rng = brain.rng.clone();
+        brain.refine_endgame_bid(&tracker, index('S').unwrap(), &mut decision);
+        assert_eq!(decision.amount, 17);
+        assert_eq!(decision.p_win, 0.5);
+        assert_eq!(brain.rng.gen::<u64>(), untouched_rng.gen::<u64>());
+    }
+
+    #[test]
+    fn endgame_refinement_does_not_buy_an_unplayable_terminal_tile() {
+        let mut brain = Brain::new(
+            Params {
+                endgame_rollout_auctions: 3,
+                deny_weight: 0.0,
+                ..Params::default()
+            },
+            FieldModel::default(),
+            1,
+        );
+        let letter = index('Z').unwrap();
+        let mut tracker = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 5);
+        tracker.on_auction_open(letter, 1);
+        // The current tile is playable in time, but an otherwise empty rack
+        // cannot form a word from a lone Z and there are no useful future draws.
+        let decision = brain.bid(&tracker, letter);
+        assert_eq!(decision.value, 0.0);
+        assert_eq!(decision.amount, 0);
+        tracker.bag_left = 0;
+        assert_eq!(brain.bid(&tracker, letter).amount, 0);
+    }
+
+    #[test]
+    #[ignore = "manual coverage probe for the cooperative 30 ms planner budget"]
+    fn endgame_refinement_can_block_a_rival_without_own_tile_value() {
+        let mut brain = Brain::new(
+            Params {
+                endgame_rollout_auctions: 1,
+                endgame_rollout_samples: 64,
+                deny_weight: 0.0,
+                ..Params::default()
+            },
+            FieldModel {
+                median: [100.0; ALPHABET],
+                sigma: 0.01,
+                phase: vec![1.0],
+                p_none: 0.0,
+                ref_players: 2,
+            },
+            1,
+        );
+        let mut tracker = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2], 0);
+        tracker.players[0].score = 12;
+        tracker.players[0].balance = 20;
+        tracker.players[1].score = 9;
+        tracker.players[1].balance = 5;
+        tracker.players[1].won = Rack::from_word("AT");
+        tracker.revealed = Rack(vickrey_core::BAG);
+        tracker.revealed.remove(index('E').unwrap());
+        tracker.bag_left = 1;
+        tracker.auctions_seen = 97;
+        // C is worthless to our empty rack. Giving it to the rival changes
+        // AT=2 into CAT=5, taking its final score from 11 to 14 and beating 12.
+        let decision = brain.bid(&tracker, index('C').unwrap());
+        assert_eq!(decision.value, 0.0);
+        assert!(decision.amount > 5 && decision.amount <= 20);
+    }
+
+    #[test]
+    fn zero_threshold_last_playable_bid_denies_even_without_own_points() {
+        let params = Params {
+            endgame_allin_auctions: 1,
+            endgame_allin_min_value: 0.0,
+            deny_weight: 0.0,
+            ..Params::default()
+        };
+        let mut brain = Brain::new(params, FieldModel::default(), 1);
+        let mut tracker = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2], 0);
+        tracker.players[0].balance = 20;
+        tracker.players[1].balance = 5;
+        tracker.players[1].won = Rack::from_word("AT");
+        tracker.on_auction_open(index('C').unwrap(), 1);
+        // The tile scores zero alone, but denying it holds a rival to AT=2
+        // instead of CAT=5. A bid above its five coins guarantees the denial.
+        let decision = brain.bid(&tracker, index('C').unwrap());
+        assert_eq!(decision.value, 0.0);
+        assert_eq!(decision.amount, 6);
+        let score = |rack: &str| {
+            brain
+                .final_plays(&Rack::from_word(rack))
+                .iter()
+                .map(|w| word_reward(w))
+                .sum::<u32>()
+        };
+        assert_eq!((score("AT"), score("ACT"), score("C")), (2, 5, 0));
+        tracker.kind = AuctionKind::FirstPrice;
+        // No reason to shade: unspent coins cannot finance another useful tile.
+        assert_eq!(brain.bid(&tracker, index('C').unwrap()).amount, 20);
+        tracker.bag_left = 0;
+        assert_eq!(brain.bid(&tracker, index('C').unwrap()).amount, 0);
+    }
+
+    #[test]
+    fn executable_bid_floor_survives_zero_value_and_planner_abstention() {
+        for window in [0, 3] {
+            let mut brain = Brain::new(
+                Params {
+                    endgame_rollout_auctions: window,
+                    ..Params::default()
+                },
+                FieldModel::default(),
+                1,
+            );
+            let letter = index('Z').unwrap();
+            let mut tracker = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2, 3, 4, 5, 6], 0);
+            tracker.players[0].balance = 3;
+            tracker.on_auction_open(letter, 1);
+            // The incomplete history cannot support consistent hidden-state
+            // rollouts. Abstention must retain the executable token bid.
+            let decision = brain.bid_with_floor(&tracker, letter, 1);
+            assert_eq!((decision.value, decision.amount), (0.0, 1));
+            assert_eq!(brain.last_bid, 1);
+            assert_eq!(decision.p_win, brain.dist(&tracker, letter).p_win(1.0));
+            // The floor cannot spend money we do not have.
+            assert_eq!(brain.bid_with_floor(&tracker, letter, 100).amount, 3);
+            // Nothing was submitted: a zero-value tile remains a zero bid.
+            assert_eq!(brain.bid_with_floor(&tracker, letter, 0).amount, 0);
+            tracker.bag_left = 0;
+            let final_bid = brain.bid_with_floor(&tracker, letter, 1);
+            assert_eq!((final_bid.amount, final_bid.p_win), (0, 0.0));
+            assert_eq!(brain.last_bid, 0);
+        }
     }
 
     #[test]
