@@ -818,6 +818,28 @@ impl Brain {
             let cap = (self.params.premium_cap_mult * d.median).ceil() as i64;
             amount = amount.min(cap.max(1));
         }
+        // Lala's completion floor: a letter that lifts our best long word by
+        // a lot is worth at least a multiple of the going price.
+        if self.params.completion_floor_mult > 0.0 {
+            let len = self.params.completion_floor_len;
+            let dict = self.dict;
+            let best = |r: &Rack| {
+                dict.best_word(r, len)
+                    .map(|w| w.reward as f64)
+                    .unwrap_or(0.0)
+            };
+            let gain = best(&t.my_rack.with(letter)) - best(&t.my_rack);
+            if gain >= self.params.completion_floor_gain {
+                let floor = (self.params.completion_floor_mult * d.median).ceil() as i64;
+                amount = amount.max(floor);
+            }
+        }
+        // Lambi Lambiii's drain floor, heads-up only: bid every letter with
+        // any value at a share of the going price, so the rival pays more.
+        if self.params.drain_floor > 0.0 && t.n_players() == 2 && value > 0.0 {
+            let floor = (self.params.drain_floor * d.median).floor() as i64;
+            amount = amount.max(floor);
+        }
         // No rival can bid more than their balance, so under Vickrey any bid
         // above the richest rival's balance + 1 wins with the same payment.
         // Clamping there is strictly dominant and makes all-in bids cost
@@ -1295,6 +1317,33 @@ mod tests {
             assert_eq!((final_bid.amount, final_bid.p_win), (0, 0.0));
             assert_eq!(brain.last_bid, 0);
         }
+    }
+
+    #[test]
+    fn drain_floor_applies_heads_up_only() {
+        // A letter with some value: heads-up, the drain floor lifts the bid to
+        // a share of the market median; at a six-seat table it does nothing.
+        let e = index('E').unwrap();
+        let p = Params {
+            drain_floor: 0.8,
+            ..Params::default()
+        };
+        let mut duel = Tracker::new(1, 1, AuctionKind::Vickrey, &[1, 2], 5);
+        duel.set_my_rack(Rack::from_word("RTNSL"));
+        duel.on_participant(1, 90, 0);
+        duel.on_participant(2, 90, 0);
+        duel.on_auction_open(e, 40);
+        let mut b = Brain::new(p.clone(), FieldModel::default(), 7);
+        let d = b.bid(&duel, e);
+        if d.value > 0.0 {
+            let floor = (0.8 * b.dist(&duel, e).median).floor() as i64;
+            assert!(d.amount >= floor.min(91), "{d:?} floor {floor}");
+        }
+        let mut six = tracker_with("RTNSL", 40);
+        six.on_participant(1, 90, 0);
+        let mut a = Brain::new(p, FieldModel::default(), 7);
+        let mut base = Brain::new(Params::default(), FieldModel::default(), 7);
+        assert_eq!(a.bid(&six, e).amount, base.bid(&six, e).amount);
     }
 
     #[test]
